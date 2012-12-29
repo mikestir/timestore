@@ -1,6 +1,4 @@
-/* FIXME!!!! Timestamps need to be signed 64-bit integers to allow for representing points
- * before 1970!
- */
+/* TODO: Review use of xint_fast32_t */
 
 #include <stdio.h>
 #include <stdint.h>
@@ -19,36 +17,81 @@
 
 #include "tsdb.h"
 #include "logging.h"
+#include "profile.h"
 
-#define ARRAY_SIZE(a)	(sizeof(a) / sizeof(a[0]))
-
-#define PROFILE_STORE	\
-	struct timeval pf_start; \
-	struct timeval pf_stop; \
-	struct timeval pf_duration;
-#define PROFILE_START	{ \
-	gettimeofday(&pf_start, NULL); \
+int tsdb_create(uint64_t node_id, unsigned int interval, unsigned int nmetrics, 
+	tsdb_pad_mode_t *pad_mode, tsdb_downsample_mode_t *ds_mode, unsigned int *decimation)
+{
+	tsdb_metadata_t md;
+	char path[TSDB_MAX_PATH];
+	int n, fd;
+	
+	FUNCTION_TRACE;
+	
+	/* Create metadata only if it does not already exist */
+	snprintf(path, TSDB_MAX_PATH, TSDB_METADATA_FORMAT, node_id);
+	DEBUG("Node %016" PRIX64 " metadata path: %s\n", node_id, path);
+	fd = open(path, O_RDWR | O_EXCL | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0) {
+		ERROR("Error creating metadata %s: %s\n", path, strerror(errno));
+		return -errno;
 	}
-#define PROFILE_END(a)	{ \
-	gettimeofday(&pf_stop, NULL); \
-	timersub(&pf_stop, &pf_start, &pf_duration); \
-	DEBUG("%s took %lu.%06lu s\n", a, (unsigned long)pf_duration.tv_sec, (unsigned long)pf_duration.tv_usec); \
+	
+	/* Populate fresh metadata */
+	INFO("Empty metadata - populating new dataset\n");
+	memset(&md, 0, sizeof(md));
+	md.magic = TSDB_MAGIC_META;
+	md.version = TSDB_VERSION;
+	md.node_id = node_id;
+	md.nmetrics = (uint32_t)nmetrics;
+	md.npoints = 0;
+	md.start_time = 0;
+	md.interval = (uint32_t)interval;
+	for (n = 0; n < nmetrics; n++) {
+		md.flags[n] = (
+			((uint32_t)pad_mode[n] << TSDB_PAD_SHIFT) |
+			((uint32_t)ds_mode[n] << TSDB_DOWNSAMPLE_SHIFT));
 	}
+	for (n = 0; n < TSDB_MAX_LAYERS; n++) {
+		if (*decimation == 0)
+			break;
+		md.decimation[n] = (uint32_t)*decimation++;
+	}
+	write(fd, &md, sizeof(tsdb_metadata_t));
+	close(fd);
+	
+	return 0;
+}
 
-// FIXME: This should be programmable in some way
-static uint32_t tsdb_default_interval = 30;
-static uint32_t tsdb_default_decimation[] = {
-	20, /* 10 minute intervals for daily views */
-	6, /* hourly */
-	6, /* 6 hourly */
-	4, /* daily */
-	7, /* weekly */
-};
+int tsdb_delete(uint64_t node_id)
+{
+	unsigned int layer;
+	char path[TSDB_MAX_PATH];
+	
+	FUNCTION_TRACE;
+	
+	/* Delete metadata file */
+	snprintf(path, TSDB_MAX_PATH, TSDB_METADATA_FORMAT, node_id);
+	DEBUG("Node %016" PRIX64 " metadata path: %s\n", node_id, path);
+	if (unlink(path) < 0) {
+		ERROR("Failed to unlink %s\n", path);
+		return -errno;
+	}
+	
+	/* Delete layer data - stop on first failure */
+	for (layer = 0; layer < TSDB_MAX_LAYERS; layer++) {		
+		snprintf(path, TSDB_MAX_PATH, TSDB_TABLE_FORMAT, node_id, layer);
+		DEBUG("Node %016" PRIX64 " layer %u table path: %s\n", node_id, layer, path);	
+		if (unlink(path) < 0)
+			break;
+	}
+	return 0;
+}
 
-tsdb_ctx_t* tsdb_open(uint64_t node_id, unsigned int nmetrics, int flags)
+tsdb_ctx_t* tsdb_open(uint64_t node_id)
 {
 	tsdb_ctx_t *ctx;
-	char path[TSDB_PATH_MAX];
+	char path[TSDB_MAX_PATH];
 	struct stat st;
 	unsigned int n, layer;
 	uint_fast32_t max_decimation = 0;
@@ -63,44 +106,18 @@ tsdb_ctx_t* tsdb_open(uint64_t node_id, unsigned int nmetrics, int flags)
 		return NULL;
 	}
 	
-	/* Open and map dataset metadata, creating if non-existent */
-	snprintf(path, TSDB_PATH_MAX, TSDB_METADATA_FORMAT, node_id);
+	/* Open and map dataset metadata */
+	snprintf(path, TSDB_MAX_PATH, TSDB_METADATA_FORMAT, node_id);
 	DEBUG("Node %016" PRIX64 " metadata path: %s\n", node_id, path);
-	ctx->meta_fd = open(path, O_RDWR | ((flags & TSDB_CREATE) ? O_CREAT : 0), 0644);
+	ctx->meta_fd = open(path, O_RDWR);
 	if (ctx->meta_fd < 0) {
 		ERROR("Error opening metadata %s: %s\n", path, strerror(errno));
 		goto fail;
 	}
 	fstat(ctx->meta_fd, &st);
 	if (st.st_size && st.st_size != sizeof(tsdb_metadata_t)) {
-		ERROR("Metadata file length is invalid - truncating\n");
-		ftruncate(ctx->meta_fd, 0);
-		fstat(ctx->meta_fd, &st);
-	}
-	if (st.st_size == 0) {
-		tsdb_metadata_t md;
-		
-		if (!(flags & TSDB_CREATE)) {
-			ERROR("Corrupt metadata\n");
-			goto fail;
-		}
-		
-		/* Populate fresh metadata */
-		INFO("Empty metadata - populating new dataset\n");
-		memset(&md, 0, sizeof(md));
-		md.magic = TSDB_MAGIC_META;
-		md.version = TSDB_VERSION;
-		md.node_id = node_id;
-		md.nmetrics = nmetrics;
-		md.npoints = 0;
-		md.start_time = 0;
-		md.interval = tsdb_default_interval; // FIXME
-		for (n = 0; n < ARRAY_SIZE(tsdb_default_decimation); n++) {
-			DEBUG("%d %" PRIu32 "\n", n, tsdb_default_decimation[n]);
-			md.decimation[n] = tsdb_default_decimation[n];
-		}
-		md.flags[0] = TSDB_PAD_UNKNOWN | TSDB_DOWNSAMPLE_MEAN; // FIXME
-		write(ctx->meta_fd, &md, sizeof(tsdb_metadata_t));
+		ERROR("Corrupt metadata\n");
+		goto fail;
 	}
 	ctx->meta = mmap(NULL, sizeof(tsdb_metadata_t), PROT_READ | PROT_WRITE,
 		MAP_SHARED, ctx->meta_fd, 0);
@@ -144,7 +161,7 @@ tsdb_ctx_t* tsdb_open(uint64_t node_id, unsigned int nmetrics, int flags)
 	
 	/* Open table files */
 	for (layer = 0; layer < TSDB_MAX_LAYERS; layer++) {		
-		snprintf(path, TSDB_PATH_MAX, TSDB_TABLE_FORMAT, node_id, layer);
+		snprintf(path, TSDB_MAX_PATH, TSDB_TABLE_FORMAT, node_id, layer);
 		DEBUG("Node %016" PRIX64 " layer %u table path: %s\n", node_id, layer, path);
 		ctx->table_fd[layer] = open(path, O_RDWR | O_CREAT, 0644);
 		if (ctx->table_fd[layer] < 0) {
@@ -167,8 +184,8 @@ tsdb_ctx_t* tsdb_open(uint64_t node_id, unsigned int nmetrics, int flags)
 	/* Allocate decimation buffer */
 	if (max_decimation > 0) {
 		DEBUG("Largest decimation step %" PRIuFAST32 "\n", max_decimation);
-		ctx->dec_buffer = malloc(sizeof(tsdb_data_t) * ctx->meta->nmetrics * max_decimation);
-		if (ctx->dec_buffer == NULL) {
+		ctx->work_buffer = malloc(sizeof(tsdb_data_t) * ctx->meta->nmetrics * max_decimation);
+		if (ctx->work_buffer == NULL) {
 			CRITICAL("Out of memory\n");
 			goto fail;
 		}
@@ -196,8 +213,8 @@ void tsdb_close(tsdb_ctx_t *ctx)
 	}
 	
 	/* Free decimation block */
-	if (ctx->dec_buffer != NULL) {
-		free(ctx->dec_buffer);
+	if (ctx->work_buffer != NULL) {
+		free(ctx->work_buffer);
 	}
 	
 	/* Free padding block */
@@ -245,12 +262,12 @@ static int tsdb_update_layer(tsdb_ctx_t *ctx, unsigned int layer, uint_fast32_t 
 		ptr = ctx->padding;
 		for (n = 0; n < pointsperblock; n++) {
 			for (metric = 0; metric < (unsigned int)ctx->meta->nmetrics; metric++, ptr++) {
-				switch (ctx->meta->flags[metric] & TSDB_PAD_MASK) {
-					case TSDB_PAD_UNKNOWN:
+				switch ((tsdb_pad_mode_t)((ctx->meta->flags[metric] >> TSDB_PAD_SHIFT) & TSDB_PAD_MASK)) {
+					case tsdbPad_Unknown:
 						*ptr = NAN;
 						break;
-					case TSDB_PAD_LAST:
-						DEBUG("FIXME: PAD_LAST not implemented\n"); 
+ 					case tsdbPad_Last:
+						DEBUG("FIXME: tsdbPad_Last not implemented\n"); 
 						*ptr = NAN; // FIXME:
 						break;
 					default:
@@ -316,7 +333,7 @@ static int tsdb_update_layer(tsdb_ctx_t *ctx, unsigned int layer, uint_fast32_t 
 		if (rc < 0) {
 			goto fail;
 		}
-		count = read(ctx->table_fd[layer], ctx->dec_buffer, sizeof(tsdb_data_t) * ctx->meta->decimation[layer] * ctx->meta->nmetrics);
+		count = read(ctx->table_fd[layer], ctx->work_buffer, sizeof(tsdb_data_t) * ctx->meta->decimation[layer] * ctx->meta->nmetrics);
 		if (count < 0) {
 			rc = count;
 			goto fail;
@@ -325,18 +342,18 @@ static int tsdb_update_layer(tsdb_ctx_t *ctx, unsigned int layer, uint_fast32_t 
 		/* Calculate decimated values */
 		for (metric = 0; metric < (unsigned int)ctx->meta->nmetrics; metric++) {
 			valid_count[metric] = 0;
-			switch (ctx->meta->flags[metric] & TSDB_DOWNSAMPLE_MASK) {
-				case TSDB_DOWNSAMPLE_MIN:
+			switch ((tsdb_downsample_mode_t)((ctx->meta->flags[metric] >> TSDB_DOWNSAMPLE_SHIFT) & TSDB_DOWNSAMPLE_MASK)) {
+				case tsdbDownsample_Min:
 					next_values[metric] = INFINITY;
 					break;
-				case TSDB_DOWNSAMPLE_MAX:
+				case tsdbDownsample_Max:
 					next_values[metric] = -INFINITY;
 				default:
 					next_values[metric] = 0.0;
 			}
 		}
 		count = count / sizeof(tsdb_data_t) / ctx->meta->nmetrics;
-		ptr = ctx->dec_buffer;
+		ptr = ctx->work_buffer;
 		while (count--) {
 			for (metric = 0; metric < (unsigned int)ctx->meta->nmetrics; metric++, ptr++) {
 				if (isnan(*ptr)) {
@@ -345,22 +362,22 @@ static int tsdb_update_layer(tsdb_ctx_t *ctx, unsigned int layer, uint_fast32_t 
 				}
 				/* Perform decimation according to the option selected in the
 				* flags for this metric */
-				switch (ctx->meta->flags[metric] & TSDB_DOWNSAMPLE_MASK) {
-					case TSDB_DOWNSAMPLE_MEAN:
-					case TSDB_DOWNSAMPLE_SUM:
+			switch ((tsdb_downsample_mode_t)((ctx->meta->flags[metric] >> TSDB_DOWNSAMPLE_SHIFT) & TSDB_DOWNSAMPLE_MASK)) {
+					case tsdbDownsample_Mean:
+					case tsdbDownsample_Sum:
 						next_values[metric] += *ptr;
 						break;
-					case TSDB_DOWNSAMPLE_MEDIAN:
+					case tsdbDownsample_Median:
 						ERROR("FIXME: MEDIAN not implemented\n"); // FIXME:
 						break;
-					case TSDB_DOWNSAMPLE_MODE:
+					case tsdbDownsample_Mode:
 						ERROR("FIXME: MODE not implemented\n"); // FIXME:
 						break;
-					case TSDB_DOWNSAMPLE_MIN:
+					case tsdbDownsample_Min:
 						if (*ptr < next_values[metric])
 							next_values[metric] = *ptr;
 						break;
-					case TSDB_DOWNSAMPLE_MAX:
+					case tsdbDownsample_Max:
 						if (*ptr > next_values[metric])
 							next_values[metric] = *ptr;
 						break;
@@ -373,15 +390,15 @@ static int tsdb_update_layer(tsdb_ctx_t *ctx, unsigned int layer, uint_fast32_t 
 		for (metric = 0; metric < (unsigned int)ctx->meta->nmetrics; metric++) {
 			if (valid_count[metric]) {
 				/* Complete the decimation function */
-				switch (ctx->meta->flags[metric] & TSDB_DOWNSAMPLE_MASK) {
-					case TSDB_DOWNSAMPLE_MEAN:
+			switch ((tsdb_downsample_mode_t)((ctx->meta->flags[metric] >> TSDB_DOWNSAMPLE_SHIFT) & TSDB_DOWNSAMPLE_MASK)) {
+					case tsdbDownsample_Mean:
 						next_values[metric] /= (double)valid_count[metric];
 						break;
-					case TSDB_DOWNSAMPLE_MEDIAN:
-					case TSDB_DOWNSAMPLE_MODE:
-					case TSDB_DOWNSAMPLE_SUM:
-					case TSDB_DOWNSAMPLE_MIN:
-					case TSDB_DOWNSAMPLE_MAX:
+					case tsdbDownsample_Median:
+					case tsdbDownsample_Mode:
+					case tsdbDownsample_Sum:
+					case tsdbDownsample_Min:
+					case tsdbDownsample_Max:
 						break;
 					default:
 						ERROR("Bad downsampling mode\n");
@@ -470,7 +487,6 @@ int tsdb_update_values(tsdb_ctx_t *ctx, int64_t *timestamp, tsdb_data_t *values)
 int tsdb_get_values(tsdb_ctx_t *ctx, int64_t *timestamp, tsdb_data_t *values)
 {
 	uint_fast32_t point;
-	int rc = 0;
 	PROFILE_STORE;
 	
 	FUNCTION_TRACE;
@@ -491,13 +507,17 @@ int tsdb_get_values(tsdb_ctx_t *ctx, int64_t *timestamp, tsdb_data_t *values)
 	}
 
 	/* Read values */
-	rc = lseek(ctx->table_fd[0], sizeof(tsdb_data_t) * point * ctx->meta->nmetrics, SEEK_SET);
-	if (rc >= 0) {
-		rc = read(ctx->table_fd[0], values, sizeof(tsdb_data_t) * ctx->meta->nmetrics);	
+	if (lseek(ctx->table_fd[0], sizeof(tsdb_data_t) * point * ctx->meta->nmetrics, SEEK_SET) < 0) {
+		ERROR("Table seek error for point %" PRIuFAST32 ": %s\n", point, strerror(errno));		
+		return -errno;
+	}
+	if (read(ctx->table_fd[0], values, sizeof(tsdb_data_t) * ctx->meta->nmetrics) < 0) {
+		ERROR("Table read error for point %" PRIuFAST32 ": %s\n", point, strerror(errno));		
+		return -errno;
 	}
 	
 	PROFILE_END("get_current");
-	return rc;
+	return 0;
 }
 
 int tsdb_get_series(tsdb_ctx_t *ctx, unsigned int metric_id, int64_t start, int64_t end, 
@@ -505,9 +525,9 @@ int tsdb_get_series(tsdb_ctx_t *ctx, unsigned int metric_id, int64_t start, int6
 {
 	uint_fast32_t layer_interval, out_interval;
 	uint_fast32_t point;
+	tsdb_data_t *layer_values, *ptr;
 	unsigned int layer;
-	int outpoints;
-	int rc = 0;
+	unsigned int naverage, actual_naverage, actual_npoints;
 	PROFILE_STORE;
 	
 	FUNCTION_TRACE;
@@ -533,7 +553,7 @@ int tsdb_get_series(tsdb_ctx_t *ctx, unsigned int metric_id, int64_t start, int6
 	
 	/* Determine best layer to use for sourcing the result */
 	out_interval = (end - start) / npoints;
-	DEBUG("Requested %u points at interval %" PRIuFAST32 "\n", npoints, out_interval);
+	DEBUG("Requested %u points on interval %" PRIuFAST32 "\n", npoints, out_interval);
 	layer_interval = ctx->meta->interval;
 	for (layer = 0; layer < TSDB_MAX_LAYERS; layer++) {
 		if (ctx->meta->decimation[layer] == 0) {
@@ -546,12 +566,20 @@ int tsdb_get_series(tsdb_ctx_t *ctx, unsigned int metric_id, int64_t start, int6
 		}
 		layer_interval *= ctx->meta->decimation[layer];
 	}
-	DEBUG("Using layer %u with interval %" PRIuFAST32 "\n", layer, layer_interval);
+	DEBUG("Using layer %u with interval %" PRIuFAST32 " decimation ratio = %" PRIuFAST32 "\n", layer, layer_interval, 
+		out_interval / layer_interval);
 	
-	/* Generate output points by rounding down the timestamp down to the nearest
-	 * point in the input layer.  This is the fast, not so accurate method.
-	 * FIXME: Add an interpolate/average method to combine multiple input points */
-	for (outpoints = 0; npoints; npoints--, start += out_interval) {
+	/* Allocate storage for values loaded from input layer */
+	layer_values = (tsdb_data_t*)malloc(sizeof(tsdb_data_t) * ctx->meta->nmetrics * out_interval / layer_interval);
+	if (layer_values == NULL) {
+		CRITICAL("Out of memory\n");
+		return -ENOMEM;
+	}
+	
+	/* Generate output points by averaging all available input points between the start
+	 * and end times for each output step.  Output timestamps are rounded down onto the
+	 * input interval - there is no interpolation. */
+	for (actual_npoints = 0; npoints; npoints--, start += out_interval) {
 		/* Determine if this point is in-range of the input table */
 		if (start < ctx->meta->start_time || 
 			start >= ctx->meta->start_time + ctx->meta->npoints * ctx->meta->interval) {
@@ -559,27 +587,42 @@ int tsdb_get_series(tsdb_ctx_t *ctx, unsigned int metric_id, int64_t start, int6
 			continue;
 		}
 		
-		/* Point may be available in the table.  Naively round down the timestamp onto
-		 * the table interval and return that point */
+		/* There may be data for this point in the table.  Calculate the range of input points
+		 * covered by the output period and read them for averaging */
+		naverage = out_interval / layer_interval;
 		point = (start - ctx->meta->start_time) / layer_interval;
-		points->timestamp = start;
-		rc = lseek(ctx->table_fd[layer], sizeof(tsdb_data_t) * (point * ctx->meta->nmetrics + metric_id), SEEK_SET);
-		if (rc >= 0) {
-			rc = read(ctx->table_fd[layer], &points->value, sizeof(tsdb_data_t));
+		if (lseek(ctx->table_fd[layer], sizeof(tsdb_data_t) * point * ctx->meta->nmetrics, SEEK_SET) < 0) {
+			ERROR("Table seek error for point %" PRIuFAST32 ": %s\n", point, strerror(errno));
+			return -errno;
 		}
-		if (rc < 0) {
+		if (read(ctx->table_fd[layer], layer_values, sizeof(tsdb_data_t) * naverage * ctx->meta->nmetrics) < 0) {
 			ERROR("Table read error for point %" PRIuFAST32 ": %s\n", point, strerror(errno));
-			return rc;
+			return -errno;
 		}
 		
-		/* Commit this point only if it contains data */
-		if (!isnan(points->value)) {
+		/* Generate average ignoring any NAN points */
+		points->timestamp = start;
+		points->value = 0.0;
+		ptr = layer_values + metric_id;
+		for (actual_naverage = 0; naverage; naverage--, ptr += ctx->meta->nmetrics) {
+			if (!isnan(*ptr)) {
+				points->value += *ptr;
+				actual_naverage++;
+			}
+		}
+		DEBUG("averaged %u points\n", actual_naverage);
+		if (actual_naverage) {
+			/* A valid point was generated */
+			points->value /= (double)actual_naverage;
 			points++;
-			outpoints++;
+			actual_npoints++;
 		}
 	}
 	
+	free(layer_values);
+	DEBUG("generated %u points\n", actual_npoints);
+	
 	PROFILE_END("get_series");
-	return outpoints;
+	return actual_npoints;
 }
 

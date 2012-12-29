@@ -48,6 +48,7 @@ static http_entity_t *http_root_entity = (http_entity_t[]){{
 			.name = "*", /* node id */
 			.get_handler = http_tsdb_get_node,
 			.put_handler = http_tsdb_create_node,
+			.delete_handler = http_tsdb_delete_node,
 			
 			.child = (http_entity_t[]) {{
 				.name = "values",

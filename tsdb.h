@@ -15,18 +15,25 @@
 #define TSDB_VERSION		0
 
 /* Flags to specify what to do when padding unavailable data points */
-#define TSDB_PAD_UNKNOWN	(0 << 0)
-#define TSDB_PAD_LAST		(1 << 0)
-#define TSDB_PAD_MASK		(3 << 0)
+typedef enum {
+	tsdbPad_Unknown = 0,
+	tsdbPad_Last,
+	tsdbPad_Reserved2,
+} tsdb_pad_mode_t;
+#define TSDB_PAD_SHIFT		0
+#define TSDB_PAD_MASK		7
 
-/* Flags to specify how to combine data points for decimation */
-#define TSDB_DOWNSAMPLE_MEAN	(0 << 8)
-#define TSDB_DOWNSAMPLE_MEDIAN	(1 << 8)
-#define TSDB_DOWNSAMPLE_MODE	(2 << 8)
-#define TSDB_DOWNSAMPLE_SUM	(3 << 8)
-#define TSDB_DOWNSAMPLE_MIN	(4 << 8)
-#define TSDB_DOWNSAMPLE_MAX	(5 << 8)
-#define TSDB_DOWNSAMPLE_MASK	(15 << 8)
+/* Flags to specify how to combine data points for downsampling */
+typedef enum {
+	tsdbDownsample_Mean = 0,
+	tsdbDownsample_Median,
+	tsdbDownsample_Mode,
+	tsdbDownsample_Sum,
+	tsdbDownsample_Min,
+	tsdbDownsample_Max,
+} tsdb_downsample_mode_t;
+#define TSDB_DOWNSAMPLE_SHIFT	8
+#define TSDB_DOWNSAMPLE_MASK	15
 
 /* Format for metadata filename ((uint64_t)node id) */
 #define TSDB_METADATA_FORMAT	"%016" PRIX64 ".tsdb"
@@ -34,7 +41,7 @@
 #define TSDB_TABLE_FORMAT	"%016" PRIX64 "_%u_.dat"
 
 /* Max size for generated paths */
-#define TSDB_PATH_MAX		256
+#define TSDB_MAX_PATH		256
 
 /* Maximum number of metrics per data set */
 #define TSDB_MAX_METRICS	32
@@ -43,9 +50,6 @@
 
 /* Maximum size of padding buffer */
 #define TSDB_MAX_PADDING_BLOCK	(1024 * 1024)
-
-/* Open flags */
-#define TSDB_CREATE		(1 << 0)
 
 /* Special value for passing a "don't care" timestamp by value */
 #define TSDB_NO_TIMESTAMP	INT64_MAX
@@ -59,10 +63,10 @@ typedef struct {
 	uint32_t	version;			/*< Version identifier */
 	uint64_t	node_id;			/*< Node ID (should match filename) */
 	uint32_t	nmetrics;			/*< Number of metrics in this data set */
-	uint32_t	npoints;			/*< Number of points we expect to find in the undecimated table */
+	uint32_t	npoints;			/*< Number of points we expect to find in the top-level table */
 	int64_t		start_time;			/*< Timestamp of first entry in table (relative to epoch) */
-	uint32_t	interval;			/*< Interval in seconds between entries in the undecimated table */
-	uint32_t	decimation[TSDB_MAX_LAYERS];	/*< Number of points to combine when generating the lower layer */
+	uint32_t	interval;			/*< Interval in seconds between entries at the top-level */
+	uint32_t	decimation[TSDB_MAX_LAYERS];	/*< Number of points to combine when downsampling to each lower layer */
 	uint32_t	flags[TSDB_MAX_METRICS];	/*< Flags (for each metric) */
 } tsdb_metadata_t;
 
@@ -74,7 +78,7 @@ typedef struct {
 	int 		table_fd[TSDB_MAX_LAYERS];	/*< File descriptors for each data layer */
 	tsdb_metadata_t	*meta;				/*< Pointer to mmapped metadata */
 	tsdb_data_t	*padding;			/*< Pre-allocated padding buffer */
-	tsdb_data_t	*dec_buffer;			/*< Pre-allocated work buffer */
+	tsdb_data_t	*work_buffer;			/*< Pre-allocated work buffer */
 	
 #ifdef TSDB_PTHREAD_LOCKING
 	pthread_mutex_t	mutex;				/*< Mutex for locking in multi-threaded applications */
@@ -88,13 +92,31 @@ typedef struct {
 } tsdb_series_point_t;
 
 /*!
- * \brief 		Opens an existing time series database or create a new one
+ * \brief		Creates a new time series database
+ * \param node_id	Node to create
+ * \param interval	Time interval (in seconds) between samples at the highest resolution
+ * \param nmetrics	Number of metrics to allocate for this node
+ * \param pad_mode	Array per metric \see tsdb_pad_mode_t
+ * \param ds_mode	Array per metric \see tsdb_downsample_mode_t
+ * \param decimation	Pointer to an array containing number of points to combine for each lower layer
+ * \return		0 or negative error code
+ */
+int tsdb_create(uint64_t node_id, unsigned int interval, unsigned int nmetrics,
+	tsdb_pad_mode_t *pad_mode, tsdb_downsample_mode_t *ds_mode, unsigned int *decimation);
+
+/*!
+ * \brief		Deletes an existing time series database
+ * \param node_id	Node to delete
+ * \return		0 or negative error code
+ */
+int tsdb_delete(uint64_t node_id);
+
+/*!
+ * \brief 		Opens an existing time series database
  * \param node_id	Node to open
- * \param flags		Flags (TSDB_CREATE)
- * \param nmetrics	Ignored unless TSDB_CREATE flag specified.  Number of metrics to allocate.
  * \return		Pointer to context structure or null on error
  */
-tsdb_ctx_t* tsdb_open(uint64_t node_id, unsigned int nmetrics, int flags);
+tsdb_ctx_t* tsdb_open(uint64_t node_id);
 
 /*!
  * \brief		Closes a time series database opened by a call to tsdb_open
@@ -151,8 +173,8 @@ int tsdb_get_values(tsdb_ctx_t *ctx, int64_t *timestamp, tsdb_data_t *values);
  *
  * \param ctx		Pointer to context structure returned by tsdb_open
  * \param metric_id	ID of metric to return
- * \param start		UNIX timestamp for the start of the period of interest
- * \param end		UNIX timestamp for the end of the period of interest
+ * \param start		UNIX timestamp for the start of the period of interest (or TSDB_NO_TIMESTAMP)
+ * \param end		UNIX timestamp for the end of the period of interest (or TSDB_NO_TIMESTAMP)
  * \param npoints	Number of data points to output
  * \param flags		Flags (reserved)
  * \param values	Pointer to an array to be updated with the result set.  It

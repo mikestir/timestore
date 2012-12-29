@@ -1,8 +1,3 @@
-/* NOTE!!! When returning whole series each point should be represented as a time/value pair
- * for direct compatibility with Flot.  The timestamp should be in milliseconds for direct
- * compatibility with Javascript.  When generating a timestamp for a new point it should be
- * generated in UTC! */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,6 +13,7 @@
 #include "http.h"
 #include "http_tsdb.h"
 #include "logging.h"
+#include "profile.h"
 
 #define MIME_TYPE		"application/json"
 
@@ -35,19 +31,6 @@
 /* FIXME: Make this runtime configurable */
 #define DEFAULT_SERIES_NPOINTS	24
 
-#define PROFILE_STORE	\
-	struct timeval pf_start; \
-	struct timeval pf_stop; \
-	struct timeval pf_duration;
-#define PROFILE_START	{ \
-	gettimeofday(&pf_start, NULL); \
-	}
-#define PROFILE_END(a)	{ \
-	gettimeofday(&pf_stop, NULL); \
-	timersub(&pf_stop, &pf_start, &pf_duration); \
-	INFO("%s took %lu.%06lu s\n", a, (unsigned long)pf_duration.tv_sec, (unsigned long)pf_duration.tv_usec); \
-	}
-
 static int post_values_value_parser(cJSON *json, unsigned int *nmetrics, double *values)
 {
 	cJSON *subitem = json->child;
@@ -61,15 +44,16 @@ static int post_values_value_parser(cJSON *json, unsigned int *nmetrics, double 
 		}
 		switch (subitem->type) {
 			case cJSON_NULL:
-				values[(*nmetrics)++] = NAN;
+				values[*nmetrics] = NAN;
 				break;
 			case cJSON_Number:
-				values[(*nmetrics)++] = subitem->valuedouble;
+				values[*nmetrics] = subitem->valuedouble;
 				break;
 			default:
 				ERROR("values must be numeric or null\n");
 				return -EINVAL;
 		}
+		(*nmetrics)++;
 		subitem = subitem->next;
 	}
 	DEBUG("found values for %u metrics\n", *nmetrics);
@@ -83,7 +67,10 @@ static int post_values_data_parser(cJSON *json, int64_t *timestamp, unsigned int
 	FUNCTION_TRACE;
 	
 	*nmetrics = 0;
-	while (subitem) {		
+	for ( ; subitem; subitem = subitem->next) {
+		if (subitem->string == NULL)
+			continue;
+
 		/* Look for items of interest - we don't recurse except to parse the
 		 * value array */
 		if (strcmp(subitem->string, "timestamp") == 0) {
@@ -102,9 +89,126 @@ static int post_values_data_parser(cJSON *json, int64_t *timestamp, unsigned int
 			if (post_values_value_parser(subitem, nmetrics, values) < 0) {
 				return -EINVAL;
 			}
+		}	
+	}
+	return 0;
+}
+
+static int put_node_metrics_parser(cJSON *json, unsigned int *nmetrics,
+	tsdb_pad_mode_t *pad_mode, tsdb_downsample_mode_t *ds_mode)
+{
+	cJSON *subitem = json->child;
+	cJSON *subitem2;
+	
+	FUNCTION_TRACE;
+	
+	*nmetrics = 0;
+	for ( ; subitem; subitem = subitem->next) {
+		if (*nmetrics == TSDB_MAX_METRICS) {
+			ERROR("Maximum number of metrics exceeded\n");
+			return -EINVAL;
 		}
-		subitem = subitem->next;
 		
+		/* Defaults */
+		pad_mode[*nmetrics] = tsdbPad_Unknown;
+		ds_mode[*nmetrics] = tsdbDownsample_Mean;
+		
+		/* Parse for anything specified in the object */
+		subitem2 = subitem->child;
+		for ( ; subitem2; subitem2 = subitem2->next) {
+			if (subitem2->string == NULL)
+				continue;
+			if (strcmp(subitem2->string, "pad_mode") == 0) {
+				if (subitem2->type != cJSON_Number) {
+					ERROR("pad_mode must be numeric\n");
+					return -EINVAL;
+				}
+				if (subitem2->valueint < 0 || subitem2->valueint > ((1 << TSDB_PAD_MASK) - 1)) {
+					ERROR("pad_mode out of range\n");
+					return -EINVAL;
+				}
+				pad_mode[*nmetrics] = (tsdb_pad_mode_t)subitem2->valueint;
+				DEBUG("metric %u pad_mode %d\n", *nmetrics, pad_mode[*nmetrics]);
+			} else if (strcmp(subitem2->string, "downsample_mode") == 0) {
+				if (subitem2->type != cJSON_Number) {
+					ERROR("downsample_mode must be numeric\n");
+					return -EINVAL;
+				}
+				if (subitem2->valueint < 0 || subitem2->valueint > ((1 << TSDB_DOWNSAMPLE_MASK) - 1)) {
+					ERROR("downsample_mode out of range\n");
+					return -EINVAL;
+				}
+				ds_mode[*nmetrics] = (tsdb_downsample_mode_t)subitem2->valueint;
+				DEBUG("metric %u ds_mode %d\n", *nmetrics, ds_mode[*nmetrics]);
+			}
+		}
+		(*nmetrics)++;
+	}
+	DEBUG("found definitions for %u metrics\n", *nmetrics);
+	return 0;
+}
+
+static int put_node_decimation_parser(cJSON *json, unsigned int *decimation)
+{
+	int ndecimation = 0;
+	cJSON *subitem = json->child;
+	
+	FUNCTION_TRACE;
+	
+	for ( ; subitem; subitem = subitem->next) {
+		if (ndecimation == TSDB_MAX_LAYERS) {
+			ERROR("Maximum number of layers exceeded\n");
+			return -EINVAL;
+		}
+		switch (subitem->type) {
+			case cJSON_Number:
+				if (subitem->valueint < 0) {
+					ERROR("decimation values must be positive\n");
+					return -EINVAL;
+				}
+				decimation[ndecimation++] = (unsigned int)subitem->valueint;
+				DEBUG("layer %u decimation %u\n", ndecimation, decimation[ndecimation - 1]);
+				break;
+			default:
+				ERROR("decimation values must be numeric\n");
+				return -EINVAL;
+		}
+	}
+	return 0;	
+}
+
+static int put_node_data_parser(cJSON *json, unsigned int *interval,
+	unsigned int *nmetrics, tsdb_pad_mode_t *pad_mode, tsdb_downsample_mode_t *ds_mode,
+	unsigned int *decimation)
+{
+	cJSON *subitem = json->child;
+	
+	FUNCTION_TRACE;
+	
+	for ( ; subitem; subitem = subitem->next) {
+		if (subitem->string == NULL)
+			continue;
+		
+		if (strcmp(subitem->string, "interval") == 0) {
+			if (subitem->type != cJSON_Number) {
+				ERROR("interval must be numeric\n");
+				return -EINVAL;
+			}
+			if (subitem->valueint < 0) {
+				ERROR("interval must be positive\n");
+				return -EINVAL;
+			}
+			*interval = (unsigned int)subitem->valueint;
+			DEBUG("interval = %u\n", *interval);
+		} else if (strcmp(subitem->string, "decimation") == 0) {
+			if (put_node_decimation_parser(subitem, decimation) < 0) {
+				return -EINVAL;
+			}
+		} else if (strcmp(subitem->string, "metrics") == 0) {
+			if (put_node_metrics_parser(subitem, nmetrics, pad_mode, ds_mode) < 0) {
+				return -EINVAL;
+			}
+		}
 	}
 	return 0;
 }
@@ -121,20 +225,104 @@ HTTP_HANDLER(http_tsdb_get_nodes)
 
 HTTP_HANDLER(http_tsdb_get_node)
 {
+	tsdb_ctx_t *db;
+	cJSON *json, *metrics, *metric;
+	uint64_t node_id;
+	int n, nlayers;
+	
 	FUNCTION_TRACE;
 	
-	ERROR("http_tsdb_get_node not supported yet\n");
+	/* Extract node ID from the URL */
+	if (sscanf(url, SCN_NODE, &node_id) != 1) {
+		/* If the node ID part of the URL doesn't decode then treat as a 404 */
+		ERROR("Invalid node\n");
+		return MHD_HTTP_NOT_FOUND;
+	}
 	
-	return MHD_HTTP_NOT_FOUND;
+	/* Attempt to open specified node - do not create if it doesn't exist */
+	db = tsdb_open(node_id);
+	if (db == NULL) {
+		ERROR("Invalid node\n");
+		return MHD_HTTP_NOT_FOUND;
+	}
+	
+	/* Encode the response record */
+	json = cJSON_CreateObject();
+	cJSON_AddNumberToObject(json, "interval", db->meta->interval);
+	for (nlayers = 0; nlayers < TSDB_MAX_LAYERS; nlayers++) {
+		if (db->meta->decimation[nlayers] == 0)
+			break;
+	}
+	cJSON_AddItemToObject(json, "decimation", cJSON_CreateIntArray((int*)db->meta->decimation, nlayers));
+	metrics = cJSON_CreateArray();
+	for (n = 0; n < db->meta->nmetrics; n++) {
+		metric = cJSON_CreateObject();
+		cJSON_AddNumberToObject(metric, "pad_mode", (db->meta->flags[n] >> TSDB_PAD_SHIFT) & TSDB_PAD_MASK);
+		cJSON_AddNumberToObject(metric, "downsample_mode", (db->meta->flags[n] >> TSDB_DOWNSAMPLE_SHIFT) & TSDB_DOWNSAMPLE_MASK);
+		cJSON_AddItemToArray(metrics, metric);
+	}
+	cJSON_AddItemToObject(json, "metrics", metrics);	
+	tsdb_close(db);	
+	
+	/* Pass response back to handler and set MIME type */
+	*resp_data = cJSON_Print(json);
+	cJSON_Delete(json);
+	DEBUG("JSON: %s\n", *resp_data);
+	*resp_data_size = strlen(*resp_data);
+	*mime_type = strdup(MIME_TYPE);
+	return MHD_HTTP_OK;
 }
 
 HTTP_HANDLER(http_tsdb_create_node)
 {
+	uint64_t node_id;
+	unsigned int interval = 0;
+	unsigned int nmetrics = 0;
+	unsigned int decimation[TSDB_MAX_LAYERS] = {0};
+	tsdb_pad_mode_t pad_mode[TSDB_MAX_METRICS];
+	tsdb_downsample_mode_t ds_mode[TSDB_MAX_METRICS];
+	cJSON *json;
+	int rc;
+	
 	FUNCTION_TRACE;
 	
-	ERROR("http_tsdb_create_node not supported yet\n");
+	/* Extract node ID from the URL */
+	if (sscanf(url, SCN_NODE, &node_id) != 1) {
+		/* If the node ID part of the URL doesn't decode then treat as a 404 */
+		ERROR("Invalid node\n");
+		return MHD_HTTP_NOT_FOUND;
+	}	
+	
+	/* Parse payload - returns 400 Bad Request on syntax error */
+	json = cJSON_Parse(req_data);
+	if (!json || (rc = put_node_data_parser(json, &interval, &nmetrics, pad_mode, ds_mode, decimation))) {
+		ERROR("JSON error: %d\n", rc);
+		return (rc == -EACCES) ? MHD_HTTP_FORBIDDEN : MHD_HTTP_BAD_REQUEST;
+	}
+	cJSON_Delete(json);
+	
+	/* Check for missing mandatory arguments */
+	if (interval == 0 || nmetrics == 0) {
+		ERROR("Missing mandatory arguments\n");
+		return MHD_HTTP_BAD_REQUEST;
+	}
+	
+	/* Create the TSDB */
+	if (tsdb_create(node_id, interval, nmetrics, pad_mode, ds_mode, decimation) < 0) {
+		ERROR("Error creating new database (probably exists)\n");
+		return MHD_HTTP_FORBIDDEN;
+	}
+	
+ 	return MHD_HTTP_OK;
+}
 
-	return MHD_HTTP_NOT_FOUND;
+HTTP_HANDLER(http_tsdb_delete_node)
+{
+	FUNCTION_TRACE;
+	
+	ERROR("http_tsdb_delete_node not supported yet\n");
+	
+	return MHD_HTTP_FORBIDDEN;
 }
 
 HTTP_HANDLER(http_tsdb_redirect_latest)
@@ -153,7 +341,7 @@ HTTP_HANDLER(http_tsdb_redirect_latest)
 	}
 	
 	/* Attempt to open specified node - do not create if it doesn't exist */
-	db = tsdb_open(node_id, 0, 0);
+	db = tsdb_open(node_id);
 	if (db == NULL) {
 		ERROR("Invalid node\n");
 		return MHD_HTTP_NOT_FOUND;
@@ -213,7 +401,7 @@ HTTP_HANDLER(http_tsdb_post_values)
 
 	/* Open specified node and validate new values */
 	PROFILE_START;
-	db = tsdb_open(node_id, nmetrics, 0);
+	db = tsdb_open(node_id);
 	if (db == NULL) {
 		ERROR("Invalid node\n");
 		return MHD_HTTP_NOT_FOUND;
@@ -266,7 +454,7 @@ HTTP_HANDLER(http_tsdb_get_values)
 	
 	/* Attempt to open specified node - do not create if it doesn't exist */
 	PROFILE_START;
-	db = tsdb_open(node_id, 0, 0);
+	db = tsdb_open(node_id);
 	if (db == NULL) {
 		ERROR("Invalid node\n");
 		return MHD_HTTP_NOT_FOUND;
@@ -359,7 +547,7 @@ HTTP_HANDLER(http_tsdb_get_series)
 	}
 	
 	/* Fetch the requested series */
-	db = tsdb_open(node_id, 0, 0);
+	db = tsdb_open(node_id);
 	if (db == NULL) {
 		ERROR("Invalid node\n");
 		return MHD_HTTP_NOT_FOUND;

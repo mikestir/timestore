@@ -16,6 +16,8 @@ HTTP_HANDLER(http_tsdb_get_nodes);
 HTTP_HANDLER(http_tsdb_get_node);
 /*! Allows creation of a new node.  Metadata specified in the request. */
 HTTP_HANDLER(http_tsdb_create_node);
+/*! Deletes a node */
+HTTP_HANDLER(http_tsdb_delete_node);
 /*! Generate an HTTP redirect to the URL of the latest time point for
  * the addressed node */
 HTTP_HANDLER(http_tsdb_redirect_latest);
