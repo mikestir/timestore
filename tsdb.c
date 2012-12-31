@@ -234,7 +234,7 @@ void tsdb_close(tsdb_ctx_t *ctx)
 	free(ctx);
 }
 
-/* FIXME: Don't really need to pass in timestamp */
+/* FIXME: Timestamp is passed in to allow for integrity checking the lower layers. Not yet implemented */
 static int tsdb_update_layer(tsdb_ctx_t *ctx, unsigned int layer, uint_fast32_t point, uint_fast32_t npoints,
 	int64_t timestamp, tsdb_data_t *values)
 {
@@ -246,7 +246,8 @@ static int tsdb_update_layer(tsdb_ctx_t *ctx, unsigned int layer, uint_fast32_t 
 	FUNCTION_TRACE;
 	PROFILE_START;
 	
-	DEBUG("Values at %" PRIi64 " at point %" PRIuFAST32 " in layer %d\n", timestamp, point, layer);
+	DEBUG("Values for %u metrics at %" PRIi64 " at point %" PRIuFAST32 " in layer %d\n", ctx->meta->nmetrics,
+	      timestamp, point, layer);
 	
 	/* Pad missing values */
 	if (point > npoints) {
@@ -294,6 +295,7 @@ static int tsdb_update_layer(tsdb_ctx_t *ctx, unsigned int layer, uint_fast32_t 
 		
 	}
 	
+	/* FIXME: Revisit this - might be better to do a read/modify/write */
 	/* Update/insert new values for all metrics that aren't set to NaN */
 	rc = lseek(ctx->table_fd[layer], sizeof(tsdb_data_t) * point * ctx->meta->nmetrics, SEEK_SET);
 	if (rc < 0) {
@@ -302,8 +304,8 @@ static int tsdb_update_layer(tsdb_ctx_t *ctx, unsigned int layer, uint_fast32_t 
 	ptr = values;
 	for (metric = 0; metric < (unsigned int)ctx->meta->nmetrics; metric++, ptr++) {
 		/* TODO: Might get a speed-up here by writing adjacent valid metrics in one go */
-		if (isnan(*ptr)) {
-			/* Skip invalid values */
+		if (point != ctx->meta->npoints && isnan(*ptr)) {
+			/* Skip invalid values except if this is a new point */
 			rc = lseek(ctx->table_fd[layer], sizeof(tsdb_data_t), SEEK_CUR);
 		} else {
 			/* Write valid values */

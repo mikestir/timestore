@@ -249,6 +249,9 @@ HTTP_HANDLER(http_tsdb_get_node)
 	/* Encode the response record */
 	json = cJSON_CreateObject();
 	cJSON_AddNumberToObject(json, "interval", db->meta->interval);
+	/* The next two are not in the spec but could be useful */
+	cJSON_AddNumberToObject(json, "start", (double)db->meta->start_time * 1000.0);
+	cJSON_AddNumberToObject(json, "npoints", db->meta->npoints);
 	for (nlayers = 0; nlayers < TSDB_MAX_LAYERS; nlayers++) {
 		if (db->meta->decimation[nlayers] == 0)
 			break;
@@ -318,11 +321,27 @@ HTTP_HANDLER(http_tsdb_create_node)
 
 HTTP_HANDLER(http_tsdb_delete_node)
 {
+	uint64_t node_id;
+	
 	FUNCTION_TRACE;
+#ifdef HTTP_TSDB_ENABLE_DELETE	
+	/* Extract node ID from the URL */
+	if (sscanf(url, SCN_NODE, &node_id) != 1) {
+		/* If the node ID part of the URL doesn't decode then treat as a 404 */
+		ERROR("Invalid node\n");
+		return MHD_HTTP_NOT_FOUND;
+	}
 	
-	ERROR("http_tsdb_delete_node not supported yet\n");
+	if (tsdb_delete(node_id) < 0) {
+		ERROR("Deletion failed\n");
+		return MHD_HTTP_NOT_FOUND;
+	}
 	
+	return MHD_HTTP_OK;
+#else
+	ERROR("Node deletion is disabled\n");
 	return MHD_HTTP_FORBIDDEN;
+#endif
 }
 
 HTTP_HANDLER(http_tsdb_redirect_latest)

@@ -6,6 +6,9 @@
 /*! Deny posts with a future timestamp (guards against DoS by ballooning the db) */
 #define HTTP_TSDB_DENY_FUTURE_POST
 
+/*! Enable DELETE on a node to destroy the corresponding database */
+#define HTTP_TSDB_ENABLE_DELETE
+
 /*! Whether or not we do a 302 redirect when timestamp needs rounding (or just
  * return the data anyway) */
 #define HTTP_TSDB_ROUND_TIMESTAMP_URLS
