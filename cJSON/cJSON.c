@@ -120,7 +120,10 @@ static char *print_number(cJSON *item)
 {
 	char *str;
 	double d=item->valuedouble;
-	if (fabs(((double)item->valueint)-d)<=DBL_EPSILON && d<=INT_MAX && d>=INT_MIN)
+	if (isnan(d)) {
+		/* Value is not-a-number - represent as null */
+		str = cJSON_strdup("null");
+	} else if (fabs(((double)item->valueint)-d)<=DBL_EPSILON && d<=INT_MAX && d>=INT_MIN)
 	{
 		str=(char*)cJSON_malloc(21);	/* 2^64+1 can be represented in 21 chars. */
 		if (str) sprintf(str,"%d",item->valueint);
