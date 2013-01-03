@@ -18,6 +18,7 @@
 
 #include "http.h"
 #include "http_tsdb.h"
+#include "http_csv.h"
 #include "logging.h"
 
 #define DEFAULT_MIME_TYPE		"text/plain"
@@ -66,6 +67,11 @@ static http_entity_t *http_root_entity = (http_entity_t[]){{
 				.child = (http_entity_t[]) {{
 					.name = "*", /* metric id */
 					.get_handler = http_tsdb_get_series
+				}},
+				.next = (http_entity_t[]) {{
+				.name = "csv",
+				.get_handler = http_csv_get_values,
+				.put_handler = http_csv_put_values,
 				}},
 				}},
 			}},

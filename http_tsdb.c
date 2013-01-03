@@ -20,9 +20,11 @@
 #define SCN_NODE		("/nodes/%" SCNx64)
 #define SCN_NODE_TIMESTAMP	("/nodes/%" SCNx64 "/values/%" SCNi64)
 #define SCN_NODE_METRIC		("/nodes/%" SCNx64 "/series/%u")
-#define PRI_NODE		("/nodes/%016" PRIx64)
-#define PRI_NODE_TIMESTAMP	("/nodes/%016" PRIx64 "/values/%" PRIi64)
-#define PRI_NODE_METRIC		("/nodes/%016" PRIx64 "/series/%u")
+/*! FIXME: Location: URLs are supposed to be absolute.  We need to determine at runtime the
+ * correct values for scheme, host and port */
+#define PRI_NODE		("http://127.0.0.1:8080/nodes/%016" PRIx64)
+#define PRI_NODE_TIMESTAMP	("http://127.0.0.1:8080/nodes/%016" PRIx64 "/values/%" PRIi64)
+#define PRI_NODE_METRIC		("http://127.0.0.1:8080/nodes/%016" PRIx64 "/series/%u")
 
 /*! Maximum length of output buffer for Location and MIME headers */
 #define MAX_HEADER_STRING	128
@@ -394,7 +396,6 @@ HTTP_HANDLER(http_tsdb_post_values)
 	int64_t timestamp;
 	double values[TSDB_MAX_METRICS];
 	int rc;
-	PROFILE_STORE;
 	
 	FUNCTION_TRACE;
 	
@@ -419,7 +420,6 @@ HTTP_HANDLER(http_tsdb_post_values)
 	INFO("POST point for %016" PRIx64 " at %" PRIi64 " for %u metrics\n", node_id, timestamp, nmetrics);
 
 	/* Open specified node and validate new values */
-	PROFILE_START;
 	db = tsdb_open(node_id);
 	if (db == NULL) {
 		ERROR("Invalid node\n");
@@ -439,7 +439,6 @@ HTTP_HANDLER(http_tsdb_post_values)
 		return (rc == -ENOENT) ? MHD_HTTP_BAD_REQUEST : MHD_HTTP_INTERNAL_SERVER_ERROR;
 	}
 	tsdb_close(db);
-	PROFILE_END("update");
 	
 	/* Set Location: header to redirect to specific URL */
 	*location = (char*)malloc(MAX_HEADER_STRING);
@@ -459,7 +458,6 @@ HTTP_HANDLER(http_tsdb_get_values)
 	double values[TSDB_MAX_METRICS];
 	cJSON *json;	
 	int rc;
-	PROFILE_STORE;
 	
 	FUNCTION_TRACE;
 	
@@ -472,7 +470,6 @@ HTTP_HANDLER(http_tsdb_get_values)
 	timestamp_orig = timestamp;
 	
 	/* Attempt to open specified node - do not create if it doesn't exist */
-	PROFILE_START;
 	db = tsdb_open(node_id);
 	if (db == NULL) {
 		ERROR("Invalid node\n");
@@ -508,7 +505,6 @@ HTTP_HANDLER(http_tsdb_get_values)
 	cJSON_AddNumberToObject(json, "timestamp", timestamp * 1000);
 	cJSON_AddItemToObject(json, "values", cJSON_CreateDoubleArray(values, db->meta->nmetrics));
 	tsdb_close(db);
-	PROFILE_END("get_values");
 	
 	/* Pass response back to handler and set MIME type */
 	*resp_data = cJSON_Print(json);
@@ -531,7 +527,6 @@ HTTP_HANDLER(http_tsdb_get_series)
 	int64_t start = TSDB_NO_TIMESTAMP, end = TSDB_NO_TIMESTAMP;
 	tsdb_series_point_t *points, *pointptr;
 	char *outbuf, *bufptr;
-	PROFILE_STORE;
 	
 	FUNCTION_TRACE;
 	
@@ -558,7 +553,6 @@ HTTP_HANDLER(http_tsdb_get_series)
 	DEBUG("start = %" PRIi64 " end = %" PRIi64 " npoints = %u\n", start, end, npoints);
 	
 	/* Allocate output buffer */
-	PROFILE_START;
 	pointptr = points = (tsdb_series_point_t*)malloc(sizeof(tsdb_series_point_t) * npoints);
 	if (points == NULL) {
 		CRITICAL("Out of memory\n");
@@ -598,7 +592,6 @@ HTTP_HANDLER(http_tsdb_get_series)
 	}
 	bufptr += snprintf(bufptr, outbuf + BUF_SIZE - bufptr, "]");
 	free(points);
-	PROFILE_END("get_series");
 	
 	/* Pass response back to handler and set MIME type */
 	*resp_data = outbuf;
