@@ -1,13 +1,6 @@
 #ifndef HTTP_H
 #define HTTP_H
 
-/* Headers needed for microhttpd - latest version does this automatically */
-#include <unistd.h>
-#include <stdarg.h>
-#include <stdint.h>
-#include <sys/time.h>
-#include <sys/types.h>
-#include <sys/socket.h>
 #include <microhttpd.h>
 
 /*! 

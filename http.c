@@ -7,13 +7,6 @@
 #include <fcntl.h>
 #include <errno.h>
 
-/* Headers needed for microhttpd - latest version does this automatically */
-#include <unistd.h>
-#include <stdarg.h>
-#include <stdint.h>
-#include <sys/time.h>
-#include <sys/types.h>
-#include <sys/socket.h>
 #include <microhttpd.h>
 
 #include "http.h"
@@ -27,7 +20,7 @@
 #define CONNECTION_TIMEOUT		10
 
 typedef struct {
-	const char *upload_data;
+	char *upload_data;
 	size_t upload_data_size;
 } http_ctx_t;
 
@@ -203,12 +196,19 @@ static int http_handler(void *arg,
 	
 	/* Get POST data if present */
 	if (*upload_data_size != 0) {
-		/* FIXME: May need to allocate a buffer in the context structure
-		 * and join chunks from multiple calls - at the moment we will only
-		 * act upon the last chunk in the request, which should be OK for
-		 * small requests */
-		ctx->upload_data = upload_data;
-		ctx->upload_data_size = *upload_data_size;
+		char *new_buffer;
+
+		/* Join chunks from multiple calls */
+		DEBUG("Growing upload buffer from %d to %d\n", (int)ctx->upload_data_size, (int)ctx->upload_data_size + (int)*upload_data_size);
+		new_buffer = (char*)realloc(ctx->upload_data, ctx->upload_data_size + *upload_data_size);
+		if (new_buffer == NULL) {
+			CRITICAL("Out of memory\n");
+			status = MHD_HTTP_INTERNAL_SERVER_ERROR;
+			goto response;
+		}
+		ctx->upload_data = new_buffer;
+		memcpy(ctx->upload_data + ctx->upload_data_size, upload_data, *upload_data_size);
+		ctx->upload_data_size += *upload_data_size;
 		*upload_data_size = 0 ;
 		return MHD_YES;
 	}
@@ -221,7 +221,7 @@ static int http_handler(void *arg,
 
 	/* Split URL on slashes and walk the entity tree for a suitable handler */
 	DEBUG("%s %s\n", method, url);
-	DEBUG("Request data:\n%.*s\n", (int)ctx->upload_data_size, ctx->upload_data);
+//	DEBUG("Request data:\n%.*s\n", (int)ctx->upload_data_size, ctx->upload_data);
 	ent = http_find_entity(url);
 	if (ent == NULL) {
 		/* No such entity */
@@ -254,13 +254,15 @@ static int http_handler(void *arg,
 
 response:
 	/* Free request context */
-	free(*ptr);
+	if (ctx->upload_data)
+		free(ctx->upload_data);
+	free(ctx);
 	*ptr = NULL;
 	
 	/* Build response */
 	DEBUG("status = %u\n", status);
-	response = MHD_create_response_from_data(resp_data_size, resp_data, 
-		resp_data ? MHD_YES /* free after use */ : MHD_NO, MHD_NO);
+	response = MHD_create_response_from_buffer(resp_data_size, resp_data,
+		resp_data ? MHD_RESPMEM_MUST_FREE : MHD_RESPMEM_PERSISTENT);
 	
 	if (location) {
 		/* Only add Location; header if the handler returned something */

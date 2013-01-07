@@ -39,8 +39,5 @@ HTTP_HANDLER(http_csv_put_values)
 		return MHD_HTTP_NOT_FOUND;
 	}
 	
-	/* Parse content for points to be added/updated */
-	DEBUG("%s\n", req_data);
-	
 	return MHD_HTTP_OK;
 }
