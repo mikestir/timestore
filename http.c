@@ -64,7 +64,7 @@ static http_entity_t *http_root_entity = (http_entity_t[]){{
 				.next = (http_entity_t[]) {{
 				.name = "csv",
 				.get_handler = http_csv_get_values,
-				.put_handler = http_csv_put_values,
+				.post_handler = http_csv_post_values,
 				}},
 				}},
 			}},

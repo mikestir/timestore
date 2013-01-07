@@ -21,7 +21,7 @@ typedef unsigned short (*http_handler_t)(
 	const char *url,
 	char **mime_type,
 	char **location,
-	const char *req_data,
+	char *req_data,
 	size_t req_data_size,
 	char **resp_data,
 	size_t *resp_data_size,
@@ -33,7 +33,7 @@ typedef unsigned short (*http_handler_t)(
 	const char *url,\
 	char **mime_type,\
 	char **location,\
-	const char *req_data,\
+	char *req_data,\
 	size_t req_data_size,\
 	char **resp_data,\
 	size_t *resp_data_size,\

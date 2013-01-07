@@ -4,6 +4,6 @@
 #include "http.h"
 
 HTTP_HANDLER(http_csv_get_values);
-HTTP_HANDLER(http_csv_put_values);
+HTTP_HANDLER(http_csv_post_values);
 
 #endif
