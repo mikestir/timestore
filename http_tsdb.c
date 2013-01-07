@@ -524,6 +524,7 @@ HTTP_HANDLER(http_tsdb_get_series)
 	const char *param;
 	uint64_t node_id;
 	unsigned int metric_id, npoints = DEFAULT_SERIES_NPOINTS;
+	int actual_npoints;
 	int64_t start = TSDB_NO_TIMESTAMP, end = TSDB_NO_TIMESTAMP;
 	tsdb_series_point_t *points, *pointptr;
 	char *outbuf, *bufptr;
@@ -566,11 +567,11 @@ HTTP_HANDLER(http_tsdb_get_series)
 		return MHD_HTTP_NOT_FOUND;
 	}
 	
-	if ((npoints = tsdb_get_series(db, metric_id, start, end, npoints, 0, points)) < 0) {
+	if ((actual_npoints = tsdb_get_series(db, metric_id, start, end, npoints, 0, points)) < 0) {
 		/* Will fail with -ENOENT if the metric ID is invalid - 404 */
 		tsdb_close(db);
 		ERROR("Fetch failed\n");
-		return (npoints == -ENOENT) ? MHD_HTTP_NOT_FOUND : MHD_HTTP_INTERNAL_SERVER_ERROR;
+		return (actual_npoints == -ENOENT) ? MHD_HTTP_NOT_FOUND : MHD_HTTP_INTERNAL_SERVER_ERROR;
 	}
 	tsdb_close(db);
 	
@@ -583,11 +584,11 @@ HTTP_HANDLER(http_tsdb_get_series)
 	}
 	
 	bufptr += snprintf(bufptr, outbuf + BUF_SIZE - bufptr, "[");
-	while (npoints--) {
+	while (actual_npoints--) {
 		bufptr += snprintf(bufptr, outbuf + BUF_SIZE - bufptr, "[ %" PRIi64 ", %f ]%s",
 			pointptr->timestamp * 1000, /* return in ms for JavaScript */
 			pointptr->value,
-			npoints ? ", " : "");
+			actual_npoints ? ", " : "");
 		pointptr++;
 	}
 	bufptr += snprintf(bufptr, outbuf + BUF_SIZE - bufptr, "]");
