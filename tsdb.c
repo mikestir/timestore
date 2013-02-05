@@ -549,7 +549,12 @@ int tsdb_get_series(tsdb_ctx_t *ctx, unsigned int metric_id, int64_t start, int6
 		ERROR("Requested metric is out of range\n");
 		return -ENOENT;
 	}
-	
+	if (npoints == 0) {
+		/* Request for zero points is not an error - just return 0 as requested */
+		INFO("Request for no points\n");
+		return 0;
+	}
+
 	/* Determine best layer to use for sourcing the result */
 	out_interval = (end - start) / npoints;
 	DEBUG("Requested %u points on interval %" PRIuFAST32 "\n", npoints, out_interval);
