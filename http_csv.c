@@ -85,7 +85,7 @@ HTTP_HANDLER(http_csv_post_values)
 					status = MHD_HTTP_BAD_REQUEST;
 					goto done;
 				}
-				
+
 				/* Valid row - write to database */
 				if ((rc = tsdb_update_values(db, &timestamp, values)) < 0) {
 					/* -ENOENT returned if timestamp is before the start of the database */
@@ -95,15 +95,15 @@ HTTP_HANDLER(http_csv_post_values)
 				}
 				nmetrics = -1;
 				nrows++;
-				
+
 				/* Skip blank lines or second part of CR/LF pair */
 				while (end_ptr[1] == '\r' || end_ptr[1] == '\n')
-					end_ptr++;				
+					end_ptr++;
 			}
-			start_ptr = end_ptr + 1;			
+			start_ptr = end_ptr + 1;
 		}
 	}
-	INFO("Imported %d rows to node %" PRIu64 "\n", nrows, node_id);
+	INFO("Imported %d rows to node %016" PRIx64 "\n", nrows, node_id);
 done:
 	tsdb_close(db);
 	return status;

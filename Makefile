@@ -10,7 +10,7 @@ MICROHTTPD-LIBS=-lpthread -lrt
 # use -pg for profiling, -g for debug only
 DEBUG_FLAGS = -g
 CC = gcc
-CFLAGS = -Wall -DVERBOSITY=3 $(DEBUG_FLAGS)
+CFLAGS = -Wall -DVERBOSITY=4 $(DEBUG_FLAGS)
 CFLAGS += -I$(MICROHTTPD-INCDIR)
 LDFLAGS = $(DEBUG_FLAGS)
 LIBS = -lm $(MICROHTTPD)/image/lib/libmicrohttpd.a $(MICROHTTPD-LIBS)

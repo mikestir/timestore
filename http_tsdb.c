@@ -22,9 +22,9 @@
 #define SCN_NODE_METRIC		("/nodes/%" SCNx64 "/series/%u")
 /*! FIXME: Location: URLs are supposed to be absolute.  We need to determine at runtime the
  * correct values for scheme, host and port */
-#define PRI_NODE		("http://127.0.0.1:8080/nodes/%016" PRIx64)
-#define PRI_NODE_TIMESTAMP	("http://127.0.0.1:8080/nodes/%016" PRIx64 "/values/%" PRIi64)
-#define PRI_NODE_METRIC		("http://127.0.0.1:8080/nodes/%016" PRIx64 "/series/%u")
+#define PRI_NODE		("http://inet1.stirling.me.uk:8080/nodes/%016" PRIx64)
+#define PRI_NODE_TIMESTAMP	("http://inet1.stirling.me.uk:8080/nodes/%016" PRIx64 "/values/%" PRIi64)
+#define PRI_NODE_METRIC		("http://inet1.stirling.me.uk:8080/nodes/%016" PRIx64 "/series/%u")
 
 /*! Maximum length of output buffer for Location and MIME headers */
 #define MAX_HEADER_STRING	128

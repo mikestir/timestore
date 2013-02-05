@@ -15,7 +15,7 @@
 #include "logging.h"
 
 #define DEFAULT_MIME_TYPE		"text/plain"
-#define SERVER_NAME			"LightTSDB/0.1 (Linux)"
+#define SERVER_NAME			"LivesenseTSDB/0.1 (Linux)"
 #define CONNECTION_LIMIT		100
 #define CONNECTION_TIMEOUT		10
 
@@ -63,18 +63,21 @@ static http_entity_t *http_root_entity = (http_entity_t[]){{
 				}},
 				.next = (http_entity_t[]) {{
 				.name = "csv",
+#if 0
 				.get_handler = http_csv_get_values,
+#endif
 				.post_handler = http_csv_post_values,
 				}},
 				}},
 			}},
 		}},
-		
+#if 0
 		.next = (http_entity_t[]) {{
 		.name = "test",
 		.arg = (void*)"main.c",
 		.get_handler = http_get_file,
 		}},
+#endif
 	}},
 }};
 
