@@ -44,6 +44,12 @@
 #define CONNECTION_LIMIT		100
 #define CONNECTION_TIMEOUT		10
 
+/* For handling redirects when we couldn't guess the correct value from
+ * the original request */
+#define DEFAULT_URL_SCHEME		"http://"
+#define DEFAULT_HOST			"127.0.0.1:8080"
+#define MAX_REDIRECT_URL_SIZE	128
+
 typedef struct {
 	char *upload_data;
 	size_t upload_data_size;
@@ -301,10 +307,24 @@ response:
 		resp_data ? MHD_RESPMEM_MUST_FREE : MHD_RESPMEM_PERSISTENT);
 	
 	if (location) {
-		/* Only add Location; header if the handler returned something */
+		const char *host = MHD_lookup_connection_value(conn, MHD_HEADER_KIND, "Host");
+		char redirect_url[MAX_REDIRECT_URL_SIZE];
+
+		/* Only add Location: header if the handler returned something */
 		DEBUG("Handler supplied location: %s\n", location);
-		MHD_add_response_header(response, MHD_HTTP_HEADER_LOCATION, location);
+
+		/* Host: header is mandatory for HTTP/1.1, but if for some reason it was missing
+		 * fall back to the default host name */
+		if (host == NULL)
+			host = DEFAULT_HOST;
+
+		/* Assemble the full URL */
+		snprintf(redirect_url, MAX_REDIRECT_URL_SIZE,
+			DEFAULT_URL_SCHEME "%s%s", host, location);
 		free(location); /* Handlers expect us to clean this up */
+
+		DEBUG("Full URL for redirect: %s\n", redirect_url);
+		MHD_add_response_header(response, MHD_HTTP_HEADER_LOCATION, redirect_url);
 	}
 
 	/* If a bad method was requested than add the Allow header based on the handlers

@@ -45,11 +45,11 @@
 #define SCN_NODE_KEYNAME	("/nodes/%" SCNx64 "/keys/%31s/")
 #define SCN_NODE_TIMESTAMP	("/nodes/%" SCNx64 "/values/%" SCNi64)
 #define SCN_NODE_METRIC		("/nodes/%" SCNx64 "/series/%u")
-/*! FIXME: Location: URLs are supposed to be absolute.  We need to determine at runtime the
- * correct values for scheme, host and port */
-#define PRI_NODE			("http://127.0.0.1:8080/nodes/%016" PRIx64)
-#define PRI_NODE_TIMESTAMP	("http://127.0.0.1:8080/nodes/%016" PRIx64 "/values/%" PRIi64)
-#define PRI_NODE_METRIC		("http://127.0.0.1:8080/nodes/%016" PRIx64 "/series/%u")
+/* URLs in the Location header must be complete with scheme and host name.  We return only the
+ * absolute path part here - the scheme and host will be prepended for us prior to sending. */
+#define PRI_NODE			("/nodes/%016" PRIx64)
+#define PRI_NODE_TIMESTAMP	("/nodes/%016" PRIx64 "/values/%" PRIi64)
+#define PRI_NODE_METRIC		("/nodes/%016" PRIx64 "/series/%u")
 
 /*! Maximum length of output buffer for Location and Content-type headers */
 #define MAX_HEADER_STRING	128
