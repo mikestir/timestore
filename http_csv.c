@@ -1,3 +1,26 @@
+/*
+ * Bulk import/export handlers for HTTP interface
+ *
+ * Copyright (C) 2012, 2013 Mike Stirling
+ *
+ * This file is part of TimeStore (http://www.livesense.co.uk/timestore)
+ *
+ * All rights reserved.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,11 +37,11 @@
 #include "logging.h"
 #include "profile.h"
 
-#define MIME_TYPE		"text/plain"
+#define CONTENT_TYPE		"text/plain"
 
-#define SCN_NODE		("/nodes/%" SCNx64)
+#define SCN_NODE			("/nodes/%" SCNx64)
 
-/*! Maximum length of output buffer for Location and MIME headers */
+/*! Maximum length of output buffer for Location and Content-type headers */
 #define MAX_HEADER_STRING	128
 
 HTTP_HANDLER(http_csv_get_values)
@@ -36,6 +59,7 @@ HTTP_HANDLER(http_csv_post_values)
 	int64_t timestamp;
 	tsdb_data_t values[TSDB_MAX_METRICS];
 	unsigned short status = MHD_HTTP_OK;
+	tsdb_key_t key;
 	
 	FUNCTION_TRACE;
 	
@@ -51,7 +75,18 @@ HTTP_HANDLER(http_csv_post_values)
 	if (db == NULL) {
 		ERROR("Invalid node\n");
 		return MHD_HTTP_NOT_FOUND;
-	}	
+	}
+
+	/* Check access */
+	if (tsdb_get_key(db, tsdbKey_Write, &key) == 0) {
+		/* Key is set - check signature */
+		if (http_check_signature(conn, (uint8_t*)key, sizeof(key),
+				"POST", url, req_data, req_data_size)) {
+			/* Bad signature */
+			tsdb_close(db);
+			return MHD_HTTP_FORBIDDEN;
+		}
+	}
 	
 	/* Decode rows (we can modify the request data since it has already been copied) */
 	start_ptr = req_data;

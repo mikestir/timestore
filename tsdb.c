@@ -1,3 +1,26 @@
+/*
+ * File-based time series database
+ *
+ * Copyright (C) 2012, 2013 Mike Stirling
+ *
+ * This file is part of TimeStore (http://www.livesense.co.uk/timestore)
+ *
+ * All rights reserved.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
 /* TODO: Review use of xint_fast32_t */
 
 #include <stdio.h>
@@ -644,3 +667,49 @@ int tsdb_get_series(tsdb_ctx_t *ctx, unsigned int metric_id, int64_t start, int6
 	return actual_npoints;
 }
 
+int tsdb_get_key(tsdb_ctx_t *ctx, tsdb_key_id_t key_id, tsdb_key_t *key)
+{
+	FUNCTION_TRACE;
+
+	if (key_id < 0 || key_id >= tsdbKey_Max) {
+		ERROR("Bad key ID\n");
+		return -EINVAL;
+	}
+
+	DEBUG("Request for node %016" PRIX64 " key %d\n", ctx->meta->node_id, (int)key_id);
+
+	if (ctx->meta->key[(int)key_id].flags == 0) {
+		INFO("No key defined\n");
+		return -ENOENT;
+	}
+
+	/* Return stored key */
+	memcpy(key, &ctx->meta->key[(int)key_id].key, sizeof(tsdb_key_t));
+	return 0;
+}
+
+int tsdb_set_key(tsdb_ctx_t *ctx, tsdb_key_id_t key_id, tsdb_key_t *key)
+{
+	FUNCTION_TRACE;
+
+	if (key_id < 0 || key_id >= tsdbKey_Max) {
+		ERROR("Bad key ID\n");
+		return -EINVAL;
+	}
+
+	DEBUG("Update to node %016" PRIX64 " key %d\n", ctx->meta->node_id, (int)key_id);
+
+	if (key) {
+		/* Store new key */
+		ctx->meta->key[(int)key_id].flags = TSDB_KEY_IN_USE;
+		memcpy(&ctx->meta->key[(int)key_id].key, key, sizeof(tsdb_key_t));
+	} else {
+		/* Erase stored key */
+		memset(&ctx->meta->key[(int)key_id], 0, sizeof(tsdb_key_info_t));
+	}
+
+	/* Flush metadata */
+	msync(ctx->meta, sizeof(tsdb_metadata_t), MS_ASYNC);
+
+	return 0;
+}

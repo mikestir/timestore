@@ -1,3 +1,26 @@
+/*
+ * Time-series REST handlers for HTTP interface
+ *
+ * Copyright (C) 2012, 2013 Mike Stirling
+ *
+ * This file is part of TimeStore (http://www.livesense.co.uk/timestore)
+ *
+ * All rights reserved.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,24 +37,34 @@
 #include "http_tsdb.h"
 #include "logging.h"
 #include "profile.h"
+#include "base64.h"
 
-#define MIME_TYPE		"application/json"
+#define CONTENT_TYPE		"application/json"
 
-#define SCN_NODE		("/nodes/%" SCNx64)
+#define SCN_NODE			("/nodes/%" SCNx64)
+#define SCN_NODE_KEYNAME	("/nodes/%" SCNx64 "/keys/%31s/")
 #define SCN_NODE_TIMESTAMP	("/nodes/%" SCNx64 "/values/%" SCNi64)
 #define SCN_NODE_METRIC		("/nodes/%" SCNx64 "/series/%u")
 /*! FIXME: Location: URLs are supposed to be absolute.  We need to determine at runtime the
  * correct values for scheme, host and port */
-#define PRI_NODE		("http://inet1.stirling.me.uk:8080/nodes/%016" PRIx64)
-#define PRI_NODE_TIMESTAMP	("http://inet1.stirling.me.uk:8080/nodes/%016" PRIx64 "/values/%" PRIi64)
-#define PRI_NODE_METRIC		("http://inet1.stirling.me.uk:8080/nodes/%016" PRIx64 "/series/%u")
+#define PRI_NODE			("http://127.0.0.1:8080/nodes/%016" PRIx64)
+#define PRI_NODE_TIMESTAMP	("http://127.0.0.1:8080/nodes/%016" PRIx64 "/values/%" PRIi64)
+#define PRI_NODE_METRIC		("http://127.0.0.1:8080/nodes/%016" PRIx64 "/series/%u")
 
-/*! Maximum length of output buffer for Location and MIME headers */
+/*! Maximum length of output buffer for Location and Content-type headers */
 #define MAX_HEADER_STRING	128
 
 /*! Default number of points to return in a series */
 /* FIXME: Make this runtime configurable */
 #define DEFAULT_SERIES_NPOINTS	24
+
+/* TSDB key names in the same order as tsdb_key_id_t */
+static const char *g_key_names[] = {
+		"read", "write"
+};
+
+/* FIXME: Move to config file */
+static const tsdb_key_t g_admin_key = "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!";
 
 static int post_values_value_parser(cJSON *json, unsigned int *nmetrics, double *values)
 {
@@ -214,6 +247,27 @@ static int put_node_data_parser(cJSON *json, unsigned int *interval,
 	}
 	return 0;
 }
+
+static int put_key_data_parser(cJSON *json, char **key_b64)
+{
+	cJSON *subitem = json->child;
+
+	FUNCTION_TRACE;
+
+	for ( ; subitem; subitem = subitem->next) {
+		if (subitem->string == NULL)
+			continue;
+
+		if (strcmp(subitem->string, "key") == 0) {
+			if (subitem->type != cJSON_String) {
+				ERROR("key must be a string\n");
+				return -EINVAL;
+			}
+			*key_b64 = subitem->valuestring;
+		}
+	}
+	return 0;
+}
 	
 HTTP_HANDLER(http_tsdb_get_nodes)
 {
@@ -231,6 +285,7 @@ HTTP_HANDLER(http_tsdb_get_node)
 	cJSON *json, *metrics, *metric;
 	uint64_t node_id;
 	int n, nlayers;
+	tsdb_key_t key;
 	
 	FUNCTION_TRACE;
 	
@@ -248,6 +303,17 @@ HTTP_HANDLER(http_tsdb_get_node)
 		return MHD_HTTP_NOT_FOUND;
 	}
 	
+	/* Check access */
+	if (tsdb_get_key(db, tsdbKey_Read, &key) == 0) {
+		/* Key is set - check signature */
+		if (http_check_signature(conn, (unsigned char*)&key, sizeof(key),
+				"GET", url, req_data, req_data_size)) {
+			/* Bad signature */
+			tsdb_close(db);
+			return MHD_HTTP_FORBIDDEN;
+		}
+	}
+
 	/* Encode the response record */
 	json = cJSON_CreateObject();
 	cJSON_AddNumberToObject(json, "interval", db->meta->interval);
@@ -269,12 +335,12 @@ HTTP_HANDLER(http_tsdb_get_node)
 	cJSON_AddItemToObject(json, "metrics", metrics);	
 	tsdb_close(db);	
 	
-	/* Pass response back to handler and set MIME type */
+	/* Pass response back to handler and set content type */
 	*resp_data = cJSON_Print(json);
 	cJSON_Delete(json);
 	DEBUG("JSON: %s\n", *resp_data);
 	*resp_data_size = strlen(*resp_data);
-	*mime_type = strdup(MIME_TYPE);
+	*content_type = strdup(CONTENT_TYPE);
 	return MHD_HTTP_OK;
 }
 
@@ -291,12 +357,19 @@ HTTP_HANDLER(http_tsdb_create_node)
 	
 	FUNCTION_TRACE;
 	
+	/* Check access - this function always requires the admin key */
+	if (http_check_signature(conn, (unsigned char*)&g_admin_key, sizeof(g_admin_key),
+			"PUT", url, req_data, req_data_size)) {
+		/* Bad signature */
+		return MHD_HTTP_FORBIDDEN;
+	}
+
 	/* Extract node ID from the URL */
 	if (sscanf(url, SCN_NODE, &node_id) != 1) {
 		/* If the node ID part of the URL doesn't decode then treat as a 404 */
 		ERROR("Invalid node\n");
 		return MHD_HTTP_NOT_FOUND;
-	}	
+	}
 	
 	/* Parse payload - returns 400 Bad Request on syntax error */
 	json = cJSON_Parse(req_data);
@@ -326,7 +399,14 @@ HTTP_HANDLER(http_tsdb_delete_node)
 	uint64_t node_id;
 	
 	FUNCTION_TRACE;
-#ifdef HTTP_TSDB_ENABLE_DELETE	
+#ifdef HTTP_TSDB_ENABLE_DELETE
+	/* Check access - this function always requires the admin key */
+	if (http_check_signature(conn, (unsigned char*)&g_admin_key, sizeof(g_admin_key),
+			"DELETE", url, req_data, req_data_size)) {
+		/* Bad signature */
+		return MHD_HTTP_FORBIDDEN;
+	}
+
 	/* Extract node ID from the URL */
 	if (sscanf(url, SCN_NODE, &node_id) != 1) {
 		/* If the node ID part of the URL doesn't decode then treat as a 404 */
@@ -346,11 +426,189 @@ HTTP_HANDLER(http_tsdb_delete_node)
 #endif
 }
 
+HTTP_HANDLER(http_tsdb_get_keys)
+{
+	tsdb_key_id_t keyid;
+	cJSON *json;
+
+	/* Check access - this function always requires the admin key */
+	if (http_check_signature(conn, (unsigned char*)&g_admin_key, sizeof(g_admin_key),
+			"GET", url, req_data, req_data_size)) {
+		/* Bad signature */
+		return MHD_HTTP_FORBIDDEN;
+	}
+
+	/* All nodes have the same keys available, so we don't need to bother parsing the
+	 * node ID.  Just return the key name array. */
+	json = cJSON_CreateArray();
+	for (keyid = 0; keyid < tsdbKey_Max; keyid++) {
+		cJSON_AddItemToArray(json, cJSON_CreateString(g_key_names[(int)keyid]));
+	}
+
+	/* Pass response back to handler and set content type */
+	*resp_data = cJSON_Print(json);
+	cJSON_Delete(json);
+	DEBUG("JSON: %s\n", *resp_data);
+	*resp_data_size = strlen(*resp_data);
+	*content_type = strdup(CONTENT_TYPE);
+	return MHD_HTTP_OK;
+}
+
+HTTP_HANDLER(http_tsdb_get_key)
+{
+	tsdb_ctx_t *db;
+	uint64_t node_id;
+	char key_name[32];
+	tsdb_key_id_t keyid;
+	tsdb_key_t key;
+	cJSON *json;
+
+	FUNCTION_TRACE;
+
+	/* Check access - this function always requires the admin key */
+	if (http_check_signature(conn, (unsigned char*)&g_admin_key, sizeof(g_admin_key),
+			"GET", url, req_data, req_data_size)) {
+		/* Bad signature */
+		return MHD_HTTP_FORBIDDEN;
+	}
+
+	/* Extract node ID and key name from the URL */
+	if (sscanf(url, SCN_NODE_KEYNAME, &node_id, key_name) != 2) {
+		/* If the node ID part of the URL doesn't decode then treat as a 404 */
+		ERROR("Invalid node or key name\n");
+		return MHD_HTTP_NOT_FOUND;
+	}
+
+	/* Determine key ID from keyname */
+	for (keyid = 0; keyid < tsdbKey_Max; keyid++) {
+		if (strcasecmp(key_name, g_key_names[(int)keyid]) == 0)
+			break;
+	}
+	if (keyid == tsdbKey_Max) {
+		ERROR("Invalid key name\n");
+		return MHD_HTTP_NOT_FOUND;
+	}
+
+	/* Attempt to open specified node - do not create if it doesn't exist */
+	db = tsdb_open(node_id);
+	if (db == NULL) {
+		ERROR("Invalid node\n");
+		return MHD_HTTP_NOT_FOUND;
+	}
+
+	/* Build response */
+	json = cJSON_CreateObject();
+	if (tsdb_get_key(db, keyid, &key) == 0) {
+		char b64[45];
+		size_t sz = sizeof(b64);
+
+		/* Key present */
+		base64_encode((unsigned char*)b64, &sz, (unsigned char*)&key, sizeof(key));
+		cJSON_AddStringToObject(json, "key", b64);
+	} else {
+		/* No key - empty string */
+		cJSON_AddStringToObject(json, "key", "");
+	}
+	tsdb_close(db);
+
+	/* Pass response back to handler and set content type */
+	*resp_data = cJSON_Print(json);
+	cJSON_Delete(json);
+	DEBUG("JSON: %s\n", *resp_data);
+	*resp_data_size = strlen(*resp_data);
+	*content_type = strdup(CONTENT_TYPE);
+	return MHD_HTTP_OK;
+}
+
+HTTP_HANDLER(http_tsdb_put_key)
+{
+	tsdb_ctx_t *db;
+	uint64_t node_id;
+	char key_name[32];
+	tsdb_key_id_t keyid;
+	char *key_b64 = NULL;
+	unsigned char key[TSDB_KEY_LENGTH + 1]; /* base64 decode requires additional work space */
+	size_t sz = sizeof(key);
+	cJSON *json;
+	int rc;
+
+	FUNCTION_TRACE;
+
+	/* Check access - this function always requires the admin key */
+	if (http_check_signature(conn, (unsigned char*)&g_admin_key, sizeof(g_admin_key),
+			"PUT", url, req_data, req_data_size)) {
+		/* Bad signature */
+		return MHD_HTTP_FORBIDDEN;
+	}
+
+	/* Extract node ID and key name from the URL */
+	if (sscanf(url, SCN_NODE_KEYNAME, &node_id, key_name) != 2) {
+		/* If the node ID part of the URL doesn't decode then treat as a 404 */
+		ERROR("Invalid node or key name\n");
+		return MHD_HTTP_NOT_FOUND;
+	}
+
+	/* Determine key ID from keyname */
+	for (keyid = 0; keyid < tsdbKey_Max; keyid++) {
+		if (strcasecmp(key_name, g_key_names[(int)keyid]) == 0)
+			break;
+	}
+	if (keyid == tsdbKey_Max) {
+		ERROR("Invalid key name\n");
+		return MHD_HTTP_NOT_FOUND;
+	}
+
+	/* Parse payload - returns 400 Bad Request on syntax error */
+	json = cJSON_Parse(req_data);
+	if (!json || (rc = put_key_data_parser(json, &key_b64))) {
+		ERROR("JSON error: %d\n", rc);
+		return MHD_HTTP_BAD_REQUEST;
+	}
+
+	/* Check for missing mandatory arguments */
+	if (key_b64 == NULL) {
+		ERROR("Missing mandatory arguments\n");
+		return MHD_HTTP_BAD_REQUEST;
+	}
+
+	/* Validate key first - we must not make any changes if any key is invalid */
+	DEBUG("key %d %s\n", keyid, key_b64);
+	rc = base64_decode(key, &sz, (unsigned char*)key_b64, strlen(key_b64));
+	cJSON_Delete(json); /* Done with stored string now */
+	if (rc || (sz && sz != sizeof(tsdb_key_t))) {
+		/* This key is invalid base64 or not 32 bytes in length */
+		ERROR("key %d is invalid (sz = %d)\n", keyid, (int)sz);
+		return MHD_HTTP_BAD_REQUEST;
+	} else {
+		DEBUG("key %d OK (sz = %d)\n", keyid, (int)sz);
+	}
+
+	/* Attempt to open specified node - do not create if it doesn't exist */
+	db = tsdb_open(node_id);
+	if (db == NULL) {
+		ERROR("Invalid node\n");
+		return MHD_HTTP_NOT_FOUND;
+	}
+
+	/* Update key */
+	if (sz) {
+		/* New key provided */
+		tsdb_set_key(db, keyid, (tsdb_key_t*)key);
+	} else {
+		/* Clear key */
+		tsdb_set_key(db, keyid, NULL);
+	}
+	tsdb_close(db);
+
+	return MHD_HTTP_OK;
+}
+
 HTTP_HANDLER(http_tsdb_redirect_latest)
 {
 	tsdb_ctx_t *db;
 	int64_t timestamp;
 	uint64_t node_id;
+	tsdb_key_t key;
 	
 	FUNCTION_TRACE;
 	
@@ -368,6 +626,17 @@ HTTP_HANDLER(http_tsdb_redirect_latest)
 		return MHD_HTTP_NOT_FOUND;
 	}
 	
+	/* Check access */
+	if (tsdb_get_key(db, tsdbKey_Read, &key) == 0) {
+		/* Key is set - check signature */
+		if (http_check_signature(conn, (unsigned char*)&key, sizeof(key),
+				"GET", url, req_data, req_data_size)) {
+			/* Bad signature */
+			tsdb_close(db);
+			return MHD_HTTP_FORBIDDEN;
+		}
+	}
+
 	/* Get latest time point */
 	timestamp = tsdb_get_latest(db);
 	tsdb_close(db);
@@ -396,6 +665,7 @@ HTTP_HANDLER(http_tsdb_post_values)
 	int64_t timestamp;
 	double values[TSDB_MAX_METRICS];
 	int rc;
+	tsdb_key_t key;
 	
 	FUNCTION_TRACE;
 	
@@ -425,6 +695,18 @@ HTTP_HANDLER(http_tsdb_post_values)
 		ERROR("Invalid node\n");
 		return MHD_HTTP_NOT_FOUND;
 	}
+
+	/* Check access */
+	if (tsdb_get_key(db, tsdbKey_Write, &key) == 0) {
+		/* Key is set - check signature */
+		if (http_check_signature(conn, (unsigned char*)&key, sizeof(key),
+				"POST", url, req_data, req_data_size)) {
+			/* Bad signature */
+			tsdb_close(db);
+			return MHD_HTTP_FORBIDDEN;
+		}
+	}
+
 	if (nmetrics != db->meta->nmetrics) {
 		ERROR("Incorrect number of metrics provided (got %u, expected %" PRIu32 ")\n", nmetrics, db->meta->nmetrics);
 		tsdb_close(db);
@@ -458,6 +740,7 @@ HTTP_HANDLER(http_tsdb_get_values)
 	double values[TSDB_MAX_METRICS];
 	cJSON *json;	
 	int rc;
+	tsdb_key_t key;
 	
 	FUNCTION_TRACE;
 	
@@ -476,6 +759,17 @@ HTTP_HANDLER(http_tsdb_get_values)
 		return MHD_HTTP_NOT_FOUND;
 	}
 	
+	/* Check access */
+	if (tsdb_get_key(db, tsdbKey_Read, &key) == 0) {
+		/* Key is set - check signature */
+		if (http_check_signature(conn, (unsigned char*)&key, sizeof(key),
+				"GET", url, req_data, req_data_size)) {
+			/* Bad signature */
+			tsdb_close(db);
+			return MHD_HTTP_FORBIDDEN;
+		}
+	}
+
 	/* Get values for the selected time point */
 	if ((rc = tsdb_get_values(db, &timestamp, values)) < 0) {
 		/* For an out of range time point we return a 404 */
@@ -506,12 +800,12 @@ HTTP_HANDLER(http_tsdb_get_values)
 	cJSON_AddItemToObject(json, "values", cJSON_CreateDoubleArray(values, db->meta->nmetrics));
 	tsdb_close(db);
 	
-	/* Pass response back to handler and set MIME type */
+	/* Pass response back to handler and set content type */
 	*resp_data = cJSON_Print(json);
 	cJSON_Delete(json);
 	DEBUG("JSON: %s\n", *resp_data);
 	*resp_data_size = strlen(*resp_data);
-	*mime_type = strdup(MIME_TYPE);
+	*content_type = strdup(CONTENT_TYPE);
 	return MHD_HTTP_OK;
 }
 
@@ -528,6 +822,7 @@ HTTP_HANDLER(http_tsdb_get_series)
 	int64_t start = TSDB_NO_TIMESTAMP, end = TSDB_NO_TIMESTAMP;
 	tsdb_series_point_t *points, *pointptr;
 	char *outbuf, *bufptr;
+	tsdb_key_t key;
 	
 	FUNCTION_TRACE;
 	
@@ -553,6 +848,24 @@ HTTP_HANDLER(http_tsdb_get_series)
 	}
 	DEBUG("start = %" PRIi64 " end = %" PRIi64 " npoints = %u\n", start, end, npoints);
 	
+	/* Fetch the requested series */
+	db = tsdb_open(node_id);
+	if (db == NULL) {
+		ERROR("Invalid node\n");
+		return MHD_HTTP_NOT_FOUND;
+	}
+
+	/* Check access */
+	if (tsdb_get_key(db, tsdbKey_Read, &key) == 0) {
+		/* Key is set - check signature */
+		if (http_check_signature(conn, (unsigned char*)&key, sizeof(key),
+				"GET", url, req_data, req_data_size)) {
+			/* Bad signature */
+			tsdb_close(db);
+			return MHD_HTTP_FORBIDDEN;
+		}
+	}
+
 	/* Allocate output buffer */
 	pointptr = points = (tsdb_series_point_t*)malloc(sizeof(tsdb_series_point_t) * npoints);
 	if (points == NULL) {
@@ -560,15 +873,9 @@ HTTP_HANDLER(http_tsdb_get_series)
 		return MHD_HTTP_INTERNAL_SERVER_ERROR;
 	}
 	
-	/* Fetch the requested series */
-	db = tsdb_open(node_id);
-	if (db == NULL) {
-		ERROR("Invalid node\n");
-		return MHD_HTTP_NOT_FOUND;
-	}
-	
 	if ((actual_npoints = tsdb_get_series(db, metric_id, start, end, npoints, 0, points)) < 0) {
 		/* Will fail with -ENOENT if the metric ID is invalid - 404 */
+		free(points);
 		tsdb_close(db);
 		ERROR("Fetch failed\n");
 		return (actual_npoints == -ENOENT) ? MHD_HTTP_NOT_FOUND : MHD_HTTP_INTERNAL_SERVER_ERROR;
@@ -594,11 +901,11 @@ HTTP_HANDLER(http_tsdb_get_series)
 	bufptr += snprintf(bufptr, outbuf + BUF_SIZE - bufptr, "]");
 	free(points);
 	
-	/* Pass response back to handler and set MIME type */
+	/* Pass response back to handler and set content type */
 	*resp_data = outbuf;
 	DEBUG("JSON: %s\n", *resp_data);
 	*resp_data_size = (unsigned int)(bufptr - outbuf);
-	*mime_type = strdup(MIME_TYPE);
+	*content_type = strdup(CONTENT_TYPE);
 	return MHD_HTTP_OK;
 }
 

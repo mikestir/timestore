@@ -1,3 +1,26 @@
+/*
+ * General purpose embedded HTTP daemon
+ *
+ * Copyright (C) 2012, 2013 Mike Stirling
+ *
+ * This file is part of TimeStore (http://www.livesense.co.uk/timestore)
+ *
+ * All rights reserved.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
 #ifndef HTTP_H
 #define HTTP_H
 
@@ -6,8 +29,8 @@
 /*! 
  * \brief Type used for URL method handlers
  * \param conn			Pointer to the microhttpd connection object
- * \param url			Full URL
- * \param mimetype		Pointer to return a buffer for setting Content-type: header
+ * \param url			Full request URL
+ * \param content_type	Pointer to return a buffer for setting Content-type: header
  * \param location		Pointer to return a buffer for setting Location: header
  * \param req_data		Upload data 
  * \param req_data_size		Size of upload data
@@ -19,7 +42,7 @@
 typedef unsigned short (*http_handler_t)(
 	struct MHD_Connection *conn,
 	const char *url,
-	char **mime_type,
+	char **content_type,
 	char **location,
 	char *req_data,
 	size_t req_data_size,
@@ -31,7 +54,7 @@ typedef unsigned short (*http_handler_t)(
 #define HTTP_HANDLER(a)		unsigned short a(\
 	struct MHD_Connection *conn,\
 	const char *url,\
-	char **mime_type,\
+	char **content_type,\
 	char **location,\
 	char *req_data,\
 	size_t req_data_size,\
@@ -56,6 +79,20 @@ typedef struct http_entity {
 
 struct MHD_Daemon* http_init(uint16_t port);
 void http_destroy(struct MHD_Daemon *d);
+
+/*!
+ * \brief			Checks the request signature
+ * \param conn		Pointer to microhttpd connection object
+ * \param key		Pointer to MAC key
+ * \param key_size	Size of MAC key in bytes
+ * \param method	Pointer to method string (GET, POST, etc.)
+ * \param url		Pointer to request URL part
+ * \param req		Pointer to buffer containing request body, or NULL if no body
+ * \param req_size	Size of request body (bytes)
+ * \return			0 if signature present and valid, otherwise -1
+ */
+int http_check_signature(struct MHD_Connection *conn, const unsigned char *key, size_t key_size,
+		const char *method, const char *url, const char *req, size_t req_size);
 
 #endif
 

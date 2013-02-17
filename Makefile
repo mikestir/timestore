@@ -1,7 +1,7 @@
-TARGET = tsdb
+TARGET = timestore
 
 OBJS = main.o tsdb.o 
-OBJS += http.o http_tsdb.o http_csv.o cJSON/cJSON.o
+OBJS += http.o http_tsdb.o http_csv.o base64.o sha2.o cJSON/cJSON.o
 
 MICROHTTPD=libmicrohttpd-0.9.24
 MICROHTTPD-INCDIR=$(MICROHTTPD)/image/include

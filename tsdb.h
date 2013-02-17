@@ -1,3 +1,26 @@
+/*
+ * File-based time series database
+ *
+ * Copyright (C) 2012, 2013 Mike Stirling
+ *
+ * This file is part of TimeStore (http://www.livesense.co.uk/timestore)
+ *
+ * All rights reserved.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
 #ifndef TSDB_H
 #define TSDB_H
 
@@ -35,6 +58,33 @@ typedef enum {
 #define TSDB_DOWNSAMPLE_SHIFT	8
 #define TSDB_DOWNSAMPLE_MASK	15
 
+/* Key flags */
+#define TSDB_KEY_IN_USE			(1 << 0)
+
+/* Length of HMAC keys (bytes).  Only database key management is handled here as
+ * part of the metadata.  API layers are expected to handle the actual access control
+ * process in a way that is appropriate for the particular API */
+#define TSDB_KEY_LENGTH		32
+
+/* Typedef for key data */
+typedef uint8_t tsdb_key_t[TSDB_KEY_LENGTH];
+
+/* Typedef for a key slot */
+typedef struct {
+	uint32_t flags;
+	tsdb_key_t key;
+} tsdb_key_info_t;
+
+/* Keys */
+typedef enum {
+	tsdbKey_Read = 0,
+	tsdbKey_Write,
+	tsdbKey_Max
+} tsdb_key_id_t;
+
+/* Size of key store */
+#define TSDB_MAX_KEYS		((int)tsdbKey_Max)
+
 /* Format for metadata filename ((uint64_t)node id) */
 #define TSDB_METADATA_FORMAT	"%016" PRIX64 ".tsdb"
 /* Format for table data filename ((uint64_t)node id, (unsigned int)layer) */
@@ -68,6 +118,7 @@ typedef struct {
 	uint32_t	interval;			/*< Interval in seconds between entries at the top-level */
 	uint32_t	decimation[TSDB_MAX_LAYERS];	/*< Number of points to combine when downsampling to each lower layer */
 	uint32_t	flags[TSDB_MAX_METRICS];	/*< Flags (for each metric) */
+	tsdb_key_info_t	key[TSDB_MAX_KEYS];	/*< MAC keystore */
 } tsdb_metadata_t;
 
 /* Type for data points */
@@ -183,5 +234,27 @@ int tsdb_get_values(tsdb_ctx_t *ctx, int64_t *timestamp, tsdb_data_t *values);
  */
 int tsdb_get_series(tsdb_ctx_t *ctx, unsigned int metric_id, int64_t start, int64_t end, 
 	unsigned int npoints, int flags, tsdb_series_point_t *points);
+
+/*!
+ * \brief			Returns a key from the database metadata
+ *
+ * \param ctx		Pointer to context structure returned by tsdb_open
+ * \param key_id	ID of key to return
+ * \param key		Pointer to key to be populated
+ *
+ * \return			0 on success, -EINVAL on bad key ID, -ENOENT if no key defined
+ */
+int tsdb_get_key(tsdb_ctx_t *ctx, tsdb_key_id_t key_id, tsdb_key_t *key);
+
+/*!
+ * \brief			Writes a key to the database metadata
+ *
+ * \param ctx		Pointer to context structure returned by tsdb_open
+ * \param key_id	ID of key to set
+ * \param key		Pointer to key data to be written to database or NULL to remove
+ *
+ * \return			0 on success, -EINVAL on bad key ID
+ */
+int tsdb_set_key(tsdb_ctx_t *ctx, tsdb_key_id_t key_id, tsdb_key_t *key);
 
 #endif

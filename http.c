@@ -1,3 +1,26 @@
+/*
+ * General purpose embedded HTTP daemon
+ *
+ * Copyright (C) 2012, 2013 Mike Stirling
+ *
+ * This file is part of TimeStore (http://www.livesense.co.uk/timestore)
+ *
+ * All rights reserved.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,9 +36,11 @@
 #include "http_tsdb.h"
 #include "http_csv.h"
 #include "logging.h"
+#include "base64.h"
+#include "sha2.h"
 
-#define DEFAULT_MIME_TYPE		"text/plain"
-#define SERVER_NAME			"LivesenseTSDB/0.1 (Linux)"
+#define DEFAULT_CONTENT_TYPE	"text/plain"
+#define SERVER_NAME				"timestore/0.1 (Linux)"
 #define CONNECTION_LIMIT		100
 #define CONNECTION_TIMEOUT		10
 
@@ -45,6 +70,16 @@ static http_entity_t *http_root_entity = (http_entity_t[]){{
 			.delete_handler = http_tsdb_delete_node,
 			
 			.child = (http_entity_t[]) {{
+				.name = "keys",
+				.get_handler = http_tsdb_get_keys,
+
+				.child = (http_entity_t[]) {{
+					.name = "*", /* key name */
+					.get_handler = http_tsdb_get_key,
+					.put_handler = http_tsdb_put_key,
+				}},
+
+				.next = (http_entity_t[]) {{
 				.name = "values",
 				.get_handler = http_tsdb_redirect_latest,
 				.post_handler = http_tsdb_post_values,
@@ -67,6 +102,7 @@ static http_entity_t *http_root_entity = (http_entity_t[]){{
 				.get_handler = http_csv_get_values,
 #endif
 				.post_handler = http_csv_post_values,
+				}},
 				}},
 				}},
 			}},
@@ -124,7 +160,7 @@ static HTTP_HANDLER(http_get_file)
 	*resp_data_size = read(fd, *resp_data, st.st_size);
 	close(fd);
 	
-	/* FIXME: Add MIME type */
+	/* FIXME: Add content type */
 	
 	return MHD_HTTP_OK;
 }
@@ -179,7 +215,7 @@ static int http_handler(void *arg,
 	http_handler_t handler;
 	int rc;
 	/* Handler variables */
-	char *mime_type = NULL, *location = NULL;
+	char *content_type = NULL, *location = NULL;
 	char *resp_data = NULL;
 	size_t resp_data_size = 0;
 	unsigned int status = MHD_HTTP_OK;
@@ -216,11 +252,8 @@ static int http_handler(void *arg,
 		return MHD_YES;
 	}
 
-#if 0
 	/* FIXME: Check Accept header (for GET) - return 406 Not Acceptable,
 	 * Check Content-type header (for POST) - return 415 Unsupported Media Type */
-	MHD_get_connection_values(conn, MHD_HEADER_KIND, &http_get_headers, NULL);
-#endif
 
 	/* Split URL on slashes and walk the entity tree for a suitable handler */
 	DEBUG("%s %s\n", method, url);
@@ -249,7 +282,7 @@ static int http_handler(void *arg,
 	}
 	if (handler) {
 		status = (handler)(
-			conn, url, &mime_type, &location,
+			conn, url, &content_type, &location,
 			ctx->upload_data, ctx->upload_data_size,
 			&resp_data, &resp_data_size,
 			ent->arg);
@@ -302,14 +335,14 @@ response:
 	}
 	
 	if (resp_data) {
-		if (mime_type) {
-			/* Handler supplied a custom MIME type */
-			DEBUG("Handler supplied content-type: %s\n", mime_type);
-			MHD_add_response_header(response, MHD_HTTP_HEADER_CONTENT_TYPE, mime_type);
-			free(mime_type); /* Handlers expect us to clean this up */		
+		if (content_type) {
+			/* Handler supplied a custom content type */
+			DEBUG("Handler supplied content-type: %s\n", content_type);
+			MHD_add_response_header(response, MHD_HTTP_HEADER_CONTENT_TYPE, content_type);
+			free(content_type); /* Handlers expect us to clean this up */
 		} else {
 			/* Fall back to default */
-			MHD_add_response_header(response, MHD_HTTP_HEADER_CONTENT_TYPE, DEFAULT_MIME_TYPE);
+			MHD_add_response_header(response, MHD_HTTP_HEADER_CONTENT_TYPE, DEFAULT_CONTENT_TYPE);
 		}
 	}
 	
@@ -362,4 +395,84 @@ void http_destroy(struct MHD_Daemon *d)
 	
 	MHD_stop_daemon(d);
 	INFO("HTTP interface terminated\n");
+}
+
+static int http_iter_get_args(void *arg,
+		enum MHD_ValueKind kind,
+		const char *key, const char *value)
+{
+	sha2_context *sha = arg;
+
+	DEBUG("%s=%s\n", key, value);
+	sha2_hmac_update(sha, (unsigned char*)key, strlen(key));
+	sha2_hmac_update(sha, (unsigned char*)"=", 1);
+	sha2_hmac_update(sha, (unsigned char*)value, strlen(value));
+	sha2_hmac_update(sha, (unsigned char*)"\n", 1);
+
+	return MHD_YES;
+}
+
+int http_check_signature(struct MHD_Connection *conn, const unsigned char *key, size_t key_size,
+		const char *method, const char *url, const char *req, size_t req_size)
+{
+	const char *signature;
+
+	FUNCTION_TRACE;
+
+	/* Get "Signature" header */
+	signature = MHD_lookup_connection_value(conn, MHD_HEADER_KIND, "Signature");
+	if (signature) {
+		sha2_context sha;
+
+		DEBUG("Request signed as : %s\n", signature);
+
+		/* Check signature */
+		uint8_t their_mac[32 + 1], our_mac[32];
+		size_t their_mac_length = sizeof(their_mac);
+
+		/* Decode their MAC */
+		if (base64_decode(their_mac, &their_mac_length, (unsigned char*)signature, strlen(signature)) ||
+				their_mac_length != 32) {
+			ERROR("Signature bad\n");
+			return -1;
+		}
+
+		/* Determine expected request signature as HMAC-SHA256 of:
+		 *
+		 * <method> <entity>\n
+		 * <payload>
+		 */
+		DEBUG("Signature data:\n");
+		sha2_hmac_starts(&sha, key, key_size, 0);
+
+		/* Request method */
+		DEBUG("%s\n", method);
+		sha2_hmac_update(&sha, (unsigned char*)method, strlen(method));
+		sha2_hmac_update(&sha, (unsigned char*)"\n", 1);
+
+		/* Request URL */
+		DEBUG("%s\n", url);
+		sha2_hmac_update(&sha, (unsigned char*)url, strlen(url));
+		sha2_hmac_update(&sha, (unsigned char*)"\n", 1);
+
+		/* Get URL query parameters */
+		MHD_get_connection_values(conn, MHD_GET_ARGUMENT_KIND, http_iter_get_args, &sha);
+
+		/* Add request body if any */
+		if (req) {
+			sha2_hmac_update(&sha, (unsigned char*)req, req_size);
+		}
+		sha2_hmac_finish(&sha, our_mac);
+
+		if (memcmp(our_mac, their_mac, 32) != 0) {
+			ERROR("Signature invalid\n");
+			return -1;
+		}
+	} else {
+		ERROR("Expected signature, none found\n");
+		return -1;
+	}
+	DEBUG("Signature OK\n");
+
+	return 0;
 }
