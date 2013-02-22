@@ -1,0 +1,226 @@
+#!/usr/bin/env python
+#
+# File-based time series database
+#
+# Copyright (C) 2012, 2013 Mike Stirling
+#
+# This file is part of TimeStore (http://www.livesense.co.uk/timestore)
+#
+# All rights reserved.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# tests
+# Test harness for Timestore server
+#
+
+import os
+import time
+from timestore import Client, TimestoreException
+from datetime import datetime, timedelta
+from random import random
+from itertools import izip
+
+DEFAULT_HOST = '127.0.0.1:8080'
+DEFAULT_KEY = '!' * 32
+
+# Allow target host to be overriden in the environment
+TIMESTORE_HOST = os.getenv('TIMESTORE_HOST', DEFAULT_HOST)
+TEST_NODE = 0x8000
+INTERVAL = 30
+DECIMATION = [10,5,2]
+NPOINTS = 100
+
+# Allow admin key to be overriden in the environment
+ADMIN_KEY = os.getenv('ADMIN_KEY', DEFAULT_KEY)
+# Dummy keys for auth tests
+READ_KEY = 'z' * 32
+WRITE_KEY = 'a' * 32
+
+def do_tests():
+	global TIMESTORE_HOST, TEST_NODE, INTERVAL, DECIMATION, NPOINTS
+	global ADMIN_KEY, READ_KEY, WRITE_KEY
+
+	print "Timestore test harness"
+	print "(C) 2013 Mike Stirling"
+	print
+
+	t = Client(TIMESTORE_HOST)
+
+	# Try to create a new node for real
+	for n in range(0,2):
+		try:
+			print "Try to create node"
+			t.create_node(TEST_NODE, {
+				'interval' : INTERVAL,
+				'decimation' : DECIMATION,
+				'metrics' : [ {
+							'pad_mode' : 0,
+							'downsample_mode' : 0
+							} ]
+				}, key = ADMIN_KEY)
+		except TimestoreException as e:
+			if e.status == 403:
+				print "Node creation was forbidden - already exists?"
+				# Forbidden - try deleting the node first
+				try:
+					print "Try to delete node"
+					t.delete_node(TEST_NODE, key = ADMIN_KEY)
+				except TimestoreException as e:
+					if e.status == 403:
+						print "FAIL: Admin key rejected"
+						raise
+				continue
+			else:
+				# Something else
+				raise
+		break
+	
+	# Set read and write keys
+	print "Configure dummy keys"
+	t.set_key(TEST_NODE, 'read', READ_KEY, key = ADMIN_KEY)
+	t.set_key(TEST_NODE, 'write', WRITE_KEY, key = ADMIN_KEY)
+	
+	# Generate some data
+	print "Generate %d points" % (NPOINTS)
+	points = []
+	totalmean = 0
+	for n in range(0, NPOINTS):
+		val = random() * 100.0
+		points.append(val)
+		totalmean = totalmean + val
+	totalmean = totalmean / float(len(points))
+	
+	# Add points to database
+	print "Add points using individual submit_values"
+	starttime = time.time()
+	start = datetime(2010,1,1)
+	timestamp = start
+	for point in points:
+		t.submit_values(TEST_NODE, [point], timestamp, key = WRITE_KEY)
+		timestamp = timestamp + timedelta(seconds = INTERVAL)
+	print "Operation completed in", (time.time() - starttime) / NPOINTS, "seconds per point"
+			
+	# Generate expected data for lower layers
+	interval = INTERVAL
+	dslast = points
+	DECIMATION = [1] + DECIMATION # test the input layer as well
+	for layer in range(0, len(DECIMATION)):
+		interval = interval * DECIMATION[layer]
+		print "Testing layer %d - interval = %d" % (layer, interval)
+		
+		ds = []
+		for a in izip(*[iter(dslast)] * DECIMATION[layer]):
+			mean = 0
+			for b in a:
+				mean = mean + b
+			mean = mean / float(len(a))
+			ds.append(mean)
+		dslast = ds
+		
+		# Get series and compare - need to round end time down onto required interval
+		# otherwise the output points will not lie on-grid
+		rounded_end = start + timedelta(seconds = len(ds) * interval)
+		series = t.get_series(TEST_NODE, 0, len(ds), start = start, end = rounded_end, key = READ_KEY)
+		timestamp = start
+		n = 0
+		for seriespoint in series:
+			if seriespoint[0] != time.mktime(timestamp.timetuple()) * 1000.0:
+				print "FAIL timestamp:", seriespoint[0] / 1000, time.mktime(timestamp.timetuple())
+				break
+			if seriespoint[1] != round(ds[n], 6):
+				print "FAIL value: ", seriespoint[1], ds[n]
+				break
+			print "PASS:", seriespoint
+			timestamp = timestamp + timedelta(seconds = interval)
+			n = n + 1
+			
+	print "Pre-calculated mean for entire dataset was", totalmean
+	
+	# Test authentication
+	print "Testing authentication"
+	print "Try to create node with no key"
+	try:
+		t.create_node(TEST_NODE + 1, {
+			'interval' : INTERVAL,
+			'decimation' : DECIMATION,
+			'metrics' : [ {
+				'pad_mode' : 0,
+				'downsample_mode' : 0
+				} ]
+			})
+		raise Exception("FAIL: create node allowed with no key")
+	except TimestoreException:
+		print "PASS"
+	
+	print "Try to create node with bad key"
+	try:
+		t.create_node(TEST_NODE + 1, {
+			'interval' : INTERVAL,
+			'decimation' : DECIMATION,
+			'metrics' : [ {
+				'pad_mode' : 0,
+				'downsample_mode' : 0
+				} ]
+			}, key = READ_KEY)
+		raise Exception("FAIL: create node allowed with bad key")
+	except TimestoreException:
+		print "PASS"
+	
+	print "Try to read values with no key"
+	try:
+		t.get_values(TEST_NODE)
+		raise Exception("FAIL: read values allowed with no key")
+	except TimestoreException:
+		print "PASS"
+	
+	print "Try to read values with bad key"
+	try:
+		t.get_values(TEST_NODE, key = WRITE_KEY)
+		raise Exception("FAIL: read values allowed with bad key")
+	except TimestoreException:
+		print "PASS"
+	
+	print "Try to write values with no key"
+	try:
+		t.submit_values(TEST_NODE, [0], timestamp)
+		raise Exception("FAIL: submit values allowed with no key")
+	except TimestoreException:
+		print "PASS"
+	
+	print "Try to write values with bad key"
+	try:
+		t.submit_values(TEST_NODE, [0], timestamp, key = READ_KEY)
+		raise Exception("FAIL: submit values allowed with bad key")
+	except TimestoreException:
+		print "PASS"
+		
+	# Remove read key
+	t.set_key(TEST_NODE, 'read', '', key = ADMIN_KEY)
+	
+	# Now read values should succeed
+	print "Try to read values with no key for open-access node"
+	try:
+		t.get_values(TEST_NODE)
+		print "PASS"
+	except TimestoreException:
+		raise
+		
+		
+	# Delete test database
+	t.delete_node(TEST_NODE, key = ADMIN_KEY)
+		
+if __name__ == '__main__':
+	do_tests()
+

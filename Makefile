@@ -27,7 +27,7 @@ $(TARGET):	$(MICROHTTPD)/image/lib/libmicrohttpd.a $(OBJS)
 $(MICROHTTPD):	$(MICROHTTPD).tar.gz
 	tar xzf $(MICROHTTPD).tar.gz
 $(MICROHTTPD)/image/lib/libmicrohttpd.a:	$(MICROHTTPD)
-	cd $(MICROHTTPD); ./configure --prefix=/ --disable-https
+	cd $(MICROHTTPD); ./configure --prefix=/ --enable-static --disable-shared --disable-https --disable-curl --disable-bauth --disable-dauth
 	make -C $(MICROHTTPD)
 	DESTDIR=$(PWD)/$(MICROHTTPD)/image make -C $(MICROHTTPD) install
 

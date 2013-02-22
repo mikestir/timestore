@@ -1,0 +1,360 @@
+#!/usr/bin/env python
+#
+# File-based time series database
+#
+# Copyright (C) 2012, 2013 Mike Stirling
+#
+# This file is part of TimeStore (http://www.livesense.co.uk/timestore)
+#
+# All rights reserved.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# tsadmin
+# Database administration utility
+#
+
+import os
+import sys
+import string
+import random
+from datetime import datetime
+from optparse import OptionParser
+from timestore import Client, TimestoreException
+
+DEFAULT_HOST = '127.0.0.1:8080'
+DEFAULT_ADMIN_KEY = '!' * 32
+DEFAULT_DECIMATION = [20, 6, 6, 4, 7]
+
+KEY_LENGTH = 32
+
+print "Timestore V0.1 Administration Tool"
+print "(C) 2012-2013 Mike Stirling"
+print
+
+def interval(s):
+	"""
+	Print a value in seconds in a sensible unit
+	"""
+	if s < 60:
+		return "%0.1f second(s)" % (s)
+	s /= 60.0
+	if s < 60:
+		return "%0.1f minute(s)" % (s)
+	s /= 60.0
+	if s < 24:
+		return "%0.1f hour(s)" % (s)
+	s /= 24.0
+	if s < 7:
+		return "%0.1f day(s)" % (s)
+	s /= 7.0
+	return "%0.1f week(s)" % (s)
+
+def genkey():
+	"""
+	Generate a random 32 byte key with no awkward characters
+	(e.g. non-printable, shell bothering)
+	"""
+	global KEY_LENGTH
+
+	chars = string.letters + string.digits + '^(){}[]-_=+;:@#~<>,./?'
+	return ''.join(random.choice(chars) for i in range(0, KEY_LENGTH))
+
+def confirm(prompt):
+	while True:
+		ans = raw_input(prompt)
+		if ans not in ['y', 'Y', 'n', 'N']:
+			print "Please enter y or n"
+			continue
+		if ans == 'y' or ans == 'Y':
+			return True
+		else:
+			return False
+
+def create_node(node_id, options, args):
+	"""
+	Create a new node with the specified root interval and number of
+	metrics.  These are required arguments.
+	FIXME:  Need to be able to specify decimation, metric args
+	"""
+	global DEFAULT_DECIMATION
+
+	# Validate arguments
+	if len(args) != 2:
+		print "createnode <interval seconds> <number of metrics>"
+		return 2
+	try:
+		ivl = int(args[0])
+		nmetrics = int(args[1])
+	except ValueError:
+		print "createnode <interval seconds> <number of metrics>"
+		return 2
+
+	db = Client(options.host)
+
+	try:
+		# Create the node
+		node = {
+			'interval' : ivl,
+			'decimation' : DEFAULT_DECIMATION,
+			'metrics' : [{'pad_mode': 0, 'downsample_mode': 0}] * nmetrics
+			}
+		db.create_node(node_id, node, key = options.admin_key)
+		print "Node %016X created" % (node_id)
+	except TimestoreException as e:
+		return e.status
+
+	# Generate keys if required
+	if options.genkeys_flag:
+		try:
+			key_names = db.get_keys(node_id, key = options.admin_key)
+			keys = {}
+			for key_name in key_names:
+				new_key = genkey()
+				keys[key_name] = db.set_key(node_id, key_name, new_key, key = options.admin_key)
+				print "%s key set to : %s" % (key_name.title(), new_key)
+		except TimestoreException as e:
+			return e.status
+
+	return 0
+
+
+def delete_node(node_id, options, args):
+	"""
+	Delete an existing node and all of its data
+	"""
+
+	db = Client(options.host)
+
+	# Check for existence
+	try:
+		read_key = db.get_key(node_id, 'read', key = options.admin_key)
+		node = db.get_node(node_id, key = read_key)
+	except TimestoreException as e:
+		return e.status
+
+	print "WARNING: This will delete all %d data points for node %016X" % (node['npoints'], node_id)
+	if not confirm("Are you sure?"):
+		return 1
+
+	# Delete it
+	try:
+		db.delete_node(node_id, key = options.admin_key)
+		print "Node %016X deleted" % (node_id)
+	except TimestoreException as e:
+		return e.status
+
+	return 0
+
+def dump_node(node_id, options, args):
+	"""
+	Dump details for the specified node.  The read key is not required as
+	this will be looked up automatically.
+
+	Will return either 0 on success, or an HTTP error code in the event
+	of the library returning an error.
+	"""
+
+	print "          Node ID : %016X" % (node_id)
+	print
+
+	db = Client(options.host)
+
+	try:
+		# Get all keys
+		key_names = db.get_keys(node_id, key = options.admin_key)
+		keys = {}
+		for key_name in key_names:
+			keys[key_name] = db.get_key(node_id, key_name, key = options.admin_key)
+			print "%13s key :" % (key_name.title()),
+			if keys[key_name]:
+				print keys[key_name]
+			else:
+				print "Not set"
+		print
+
+		# Get node data
+		node = db.get_node(node_id, key = keys['read'])
+		ivl = node['interval']
+
+		print " Number of points :", node['npoints']
+		print "      Starting at :", str(datetime.fromtimestamp(node['start'] / 1000))
+		print "    Root interval :", interval(ivl)
+		print " Decimation steps :", node['decimation']
+		for decimation in node['decimation']:
+			ivl *= decimation
+			print " Derived interval :", interval(ivl)
+		print
+
+		print "Number of metrics :", len(node['metrics'])
+		for idx, metric in enumerate(node['metrics']):
+			print " %16d :" % (idx),
+			if metric['pad_mode'] == 0:
+				print "SKIP, ",
+			elif metric['pad_mode'] == 1:
+				print "REPEAT, ",
+			else:
+				print "UNKNOWN, ",
+
+			if metric['downsample_mode'] == 0:
+				print "MEAN"
+			elif metric['downsample_mode'] == 1:
+				print "MEDIAN"
+			elif metric['downsample_mode'] == 2:
+				print "MODE"
+			elif metric['downsample_mode'] == 3:
+				print "SUM"
+			elif metric['downsample_mode'] == 4:
+				print "MIN"
+			elif metric['downsample_mode'] == 5:
+				print "MAX"
+		print
+
+		# Get current values
+		(timestamp, values) = db.get_values(node_id, key = keys['read'])
+		print "   Current values :", values, "@", timestamp
+		print
+
+	except TimestoreException as e:
+		return e.status
+
+	return 0
+
+
+def set_key(node_id, options, args):
+	"""
+	Set the named key to the supplied value (or generate a key if -g specified)
+	Omit the key argument to remove the named key
+	"""
+	global KEY_LENGTH
+
+	# Validate arguments
+	if len(args) < 1:
+		print "setkey <key name> [<key>]"
+		return 2
+	if len(args) > 1 and len(args[1]) != KEY_LENGTH:
+		print "Key must be %d bytes in length" % (KEY_LENGTH)
+		return 2
+
+	key_name = args[0]
+	try:
+		new_key = args[1]
+	except IndexError:
+		new_key = None
+
+	if options.genkeys_flag:
+		new_key = genkey()
+
+	print "Set node %016X %s key to %s" % (node_id, key_name, new_key)
+
+	db = Client(options.host)
+
+	try:
+		db.set_key(node_id, key_name, new_key, key = options.admin_key)
+	except TimestoreException as e:
+		return e.status
+
+	return 0
+
+def get_key(node_id, options, args):
+	"""
+	Returns the named key
+	"""
+
+	# Validate arguments
+	if len(args) < 1:
+		print "getkey <key name>"
+		return 2
+
+	key_name = args[0]
+
+	db = Client(options.host)
+	try:
+		key = db.get_key(node_id, key_name, key = options.admin_key)
+		if not key:
+			key = "not set"
+		print "Node %016X %s key is %s" % (node_id, key_name, key)
+	except TimestoreException as e:
+		return e.status
+
+	return 0
+
+def main():
+	global KEY_LENGTH
+	global DEFAULT_HOST, DEFAULT_ADMIN_KEY
+
+	# Look up host and key in environment
+	host = os.getenv('TIMESTORE_HOST', DEFAULT_HOST)
+	admin_key = os.getenv('TIMESTORE_ADMIN_KEY', DEFAULT_ADMIN_KEY)
+
+	# Process options
+	parser = OptionParser(
+		usage = "usage: %prog [options] <command> <node ID hex> [<command args>]",
+		version = "%prog 0.1")
+	parser.add_option('-g', '--genkeys',
+		action = 'store_true',
+		dest = 'genkeys_flag',
+		default = False,
+		help = "Generate random keys (createnode/setkeys)")
+	parser.add_option('-H', '--host',
+		action = 'store',
+		dest = 'host',
+		default = host,
+		help = "Server hostname:port")
+	parser.add_option('-k', '--key',
+		action = 'store',
+		dest = 'admin_key',
+		default = admin_key,
+		help = "Administration key for the specified server")
+	(options, args) = parser.parse_args()
+
+	# There must be at least a command and node ID
+	if len(args) < 2:
+		parser.error("Must specify at least command and node ID")
+
+	# Validate node ID
+	try:
+		node_id = int(args[1], 16)
+	except ValueError:
+		parser.error("Node ID must be hexadecimal")
+
+	# Validate keys
+	if len(options.admin_key) != KEY_LENGTH:
+		parser.error("Admin key must be %d bytes in length" % (KEY_LENGTH))
+
+	# Look up command and execute
+	cmd = args[0]
+	args = args[2:]
+	if cmd == 'createnode':
+		rc = create_node(node_id, options, args)
+	elif cmd == 'deletenode':
+		rc = delete_node(node_id, options, args)
+	elif cmd == 'dumpnode':
+		rc = dump_node(node_id, options, args)
+	elif cmd == 'getkey':
+		rc = get_key(node_id, options, args)
+	elif cmd == 'setkey':
+		rc = set_key(node_id, options, args)
+	else:
+		parser.error("Invalid command")
+
+	# Display error message if required and return status code
+	if rc == 403:
+		print "Access denied.  Bad admin key or duplicate node ID."
+	elif rc == 404:
+		print "Requested entity not found"
+	return rc
+
+if __name__ == '__main__':
+	sys.exit(main())
