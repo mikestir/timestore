@@ -1,6 +1,6 @@
 TARGET = timestore
 
-OBJS = main.o tsdb.o 
+OBJS = main.o logging.o tsdb.o 
 OBJS += http.o http_tsdb.o http_csv.o base64.o sha2.o cJSON/cJSON.o
 
 MICROHTTPD=libmicrohttpd-0.9.24
@@ -10,7 +10,7 @@ MICROHTTPD-LIBS=-lpthread -lrt
 # use -pg for profiling, -g for debug only
 DEBUG_FLAGS = -g
 CC = gcc
-CFLAGS = -Wall -DVERBOSITY=4 $(DEBUG_FLAGS)
+CFLAGS = -Wall $(DEBUG_FLAGS)
 CFLAGS += -I$(MICROHTTPD-INCDIR)
 LDFLAGS = $(DEBUG_FLAGS)
 LIBS = -lm $(MICROHTTPD)/image/lib/libmicrohttpd.a $(MICROHTTPD-LIBS)

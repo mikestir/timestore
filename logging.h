@@ -1,5 +1,5 @@
 /*
- * Logging macros
+ * Logging functions
  *
  * Copyright (C) 2012, 2013 Mike Stirling
  *
@@ -24,9 +24,6 @@
 #ifndef LOGGING_H
 #define LOGGING_H
 
-#include "ansi.h"
-
-/* FIXME: convert to runtime */
 typedef enum {
 	LL_CRITICAL,
 	LL_ERROR,
@@ -36,37 +33,27 @@ typedef enum {
 	LL_TRACE
 } log_level_t;
 
-#if VERBOSITY > 0
-#define CRITICAL(a,...)	{ fprintf(stderr, ATTR_RESET FG_RED __FILE__ "(%d): " ATTR_RESET a, __LINE__, ##__VA_ARGS__); }
-#else
-#define CRITICAL(...)
-#endif
-#if VERBOSITY > 1
-#define ERROR(a,...)	{ fprintf(stderr, ATTR_RESET FG_YELLOW __FILE__ "(%d): " ATTR_RESET a, __LINE__, ##__VA_ARGS__); }
-#else
-#define ERROR(...)
-#endif
-#if VERBOSITY > 2
-#define WARNING(a,...)	{ fprintf(stderr, ATTR_RESET FG_BLUE __FILE__ "(%d): " ATTR_RESET a, __LINE__, ##__VA_ARGS__); }
-#else
-#define WARNING(...)
-#endif
-#if VERBOSITY > 3
-#define INFO(a,...)	{ fprintf(stderr, ATTR_RESET FG_WHITE __FILE__ "(%d): " ATTR_RESET a, __LINE__, ##__VA_ARGS__); }
-#else
-#define INFO(...)
-#endif
-#if VERBOSITY > 4
-#define DEBUG(a,...)	{ fprintf(stderr, ATTR_RESET FG_GREEN __FILE__ "(%d): " ATTR_RESET a, __LINE__, ##__VA_ARGS__); }
-#else
-#define DEBUG(...)
-#endif
-#if VERBOSITY > 5
-#define TRACE(a,...)	{ fprintf(stderr, ATTR_RESET FG_GREEN __FILE__ "(%d): " ATTR_RESET a, __LINE__, ##__VA_ARGS__); }
-#else
-#define TRACE(...)
-#endif
+#define CRITICAL(a,...)	logging_log(LL_CRITICAL, __FILE__, __LINE__, a, ##__VA_ARGS__)
+#define ERROR(a,...)	logging_log(LL_ERROR, __FILE__, __LINE__, a, ##__VA_ARGS__)
+#define WARNING(a,...)	logging_log(LL_WARNING, __FILE__, __LINE__, a, ##__VA_ARGS__)
+#define INFO(a,...)		logging_log(LL_INFO, __FILE__, __LINE__, a, ##__VA_ARGS__)
+#define DEBUG(a,...)	logging_log(LL_DEBUG, __FILE__, __LINE__, a, ##__VA_ARGS__)
+#define TRACE(a,...)	logging_log(LL_TRACE, __FILE__, __LINE__, a, ##__VA_ARGS__)
 
 #define FUNCTION_TRACE	TRACE("%s()\n", __FUNCTION__)
+
+/*!
+ * \brief Set the log level.  Messages with log level above the set value are muted.
+ */
+void logging_set_log_level(log_level_t log_level);
+
+/*!
+ * \brief Log messages to stderr
+ * \param log_level		Message is muted if the selected log level below this value
+ * \param file			Source file in which the message originates
+ * \param line			Line number at which the message originates
+ * \param fmt			Format string followed by variable number of arguments
+ */
+void logging_log(log_level_t log_level, const char *file, int line, const char *fmt, ...);
 
 #endif

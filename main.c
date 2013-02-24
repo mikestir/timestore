@@ -37,9 +37,11 @@
 #include "logging.h"
 #include "profile.h"
 
-#define PORT		8080
-#define USER		"tsdb"
-#define DB_PATH		"/var/lib/tsdb"
+#define DEFAULT_PORT		8080
+#define DEFAULT_USER		"timestore"
+#define DEFAULT_DB_PATH		"/var/lib/timestore"
+#define DEFAULT_LOG_FILE	"timestore.log"
+#define DEFAULT_LOG_LEVEL	1
 
 static int terminate = 0;
 
@@ -52,11 +54,12 @@ void sigint_handler(int signum)
 static void usage(const char *name)
 {
 	fprintf(stderr,
-		"Usage: %s [-d] [-p <HTTP port>] [-u <run as user>] [-D <db path>]\n\n"
-		"-d Don't daemonise - log to stderr\n"
+		"Usage: %s [-d] [-v <log level>] [-p <HTTP port>] [-u <run as user>] [-D <db path>]\n\n"
+		"-d Don't daemonise - logs to stderr\n"
 		"-D Path to database tree\n\n"
 		"-p Override HTTP listen port\n"
 		"-u Run as specified user (not when -d specified)\n"
+		"-v Set logging verbosity\n"
 		, name);
 	exit(EXIT_FAILURE);
 }
@@ -78,7 +81,7 @@ static void daemonise(void)
 	}
 	if (pid > 0) {
 		/* Child process forked - terminate parent */
-		TRACE("Daemon started in process %d\n", pid);
+		INFO("Daemon started in process %d\n", pid);
 		exit(EXIT_SUCCESS);
 	}
 
@@ -93,7 +96,7 @@ static void daemonise(void)
 	/* Redirect io */
 	freopen("/dev/null", "r", stdin);
 	freopen("/dev/null", "w", stdout);
-	freopen("/dev/null", "w", stderr);
+	freopen(DEFAULT_LOG_FILE, "w+", stderr);
 }
 
 void test(void)
@@ -129,12 +132,13 @@ int main(int argc, char **argv)
 {
 	struct MHD_Daemon *d;
 	int opt, debug = 0;
-	unsigned short port = PORT;
+	int log_level = DEFAULT_LOG_LEVEL;
+	unsigned short port = DEFAULT_PORT;
 	char *path = NULL, *user = NULL;
 	struct sigaction newsa, oldsa;
 
 	/* Parse options */
-	while ((opt = getopt(argc, argv, "dD:p:u:")) != -1) {
+	while ((opt = getopt(argc, argv, "dD:p:u:v:")) != -1) {
 		switch (opt) {
 			case 'd':
 				debug = 1;
@@ -148,10 +152,16 @@ int main(int argc, char **argv)
 			case 'u':
 				user = strdup(optarg);
 				break;
+			case 'v':
+				log_level = atoi(optarg);
+				break;
 			default:
 				usage(argv[0]);
 		}
 	}
+
+	/* Adjust log level according to selected verbosity */
+	logging_set_log_level(log_level);
 
 	/* Daemonise - all initialisation must be performed in the
 	 * child only, so this is done before anything else */
@@ -161,9 +171,9 @@ int main(int argc, char **argv)
 
 	/* Assume defaults for strings */
 	if (path == NULL)
-		path = strdup(DB_PATH);
+		path = strdup(DEFAULT_DB_PATH);
 	if (user == NULL)
-		user = strdup(USER);
+		user = strdup(DEFAULT_USER);
 
 	/* Change user if we are root */
 	if (getuid() == 0 || geteuid() == 0) {
