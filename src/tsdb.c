@@ -579,13 +579,20 @@ int tsdb_get_series(tsdb_ctx_t *ctx, unsigned int metric_id, int64_t start, int6
 	}
 
 	/* Determine best layer to use for sourcing the result */
-	out_interval = (end - start) / npoints;
-	DEBUG("Requested %u points on interval %" PRIuFAST32 "\n", npoints, out_interval);
-	if ((end - start) < npoints) {
-		/* Minimum interval for output points is 1 second */
-		npoints = end - start;
-		out_interval = 1;
-		INFO("Reduced requested points to %u for minimum 1 second interval\n", npoints);
+	if (npoints == 1) {
+		/* Special case - returns the value in between the start and end points */
+		end = start = (start + end) / 2;
+		out_interval = 0;
+		DEBUG("Returning single point at %" PRIi64 "\n", start);
+	} else {
+		out_interval = (end - start) / (npoints - 1); /* 1 less interval than points */
+		DEBUG("Requested %u points on interval %" PRIuFAST32 "\n", npoints, out_interval);
+		if ((end - start) < (npoints - 1)) {
+			/* Minimum interval for output points is 1 second */
+			npoints = end - start + 1;
+			out_interval = 1;
+			INFO("Reduced requested points to %u for minimum 1 second interval\n", npoints);
+		}
 	}
 	{
 		struct tm *tmp;
