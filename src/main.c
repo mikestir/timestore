@@ -40,7 +40,7 @@
 #define DEFAULT_PORT		8080
 #define DEFAULT_USER		"timestore"
 #define DEFAULT_DB_PATH		"/var/lib/timestore"
-#define DEFAULT_LOG_FILE	"timestore.log"
+#define DEFAULT_LOG_FILE	"/var/log/timestore.log"
 #define DEFAULT_LOG_LEVEL	1
 
 static int terminate = 0;
