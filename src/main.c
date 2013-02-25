@@ -96,7 +96,7 @@ static void daemonise(void)
 	/* Redirect io */
 	freopen("/dev/null", "r", stdin);
 	freopen("/dev/null", "w", stdout);
-	freopen(DEFAULT_LOG_FILE, "w+", stderr);
+	freopen(DEFAULT_LOG_FILE, "a", stderr);
 }
 
 void test(void)

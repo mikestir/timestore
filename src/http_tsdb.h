@@ -60,5 +60,10 @@ HTTP_HANDLER(http_tsdb_get_values);
 /*! Return a time series on the specified metric for the addressed node */
 HTTP_HANDLER(http_tsdb_get_series);
 
+/*!
+ * \brief Generate random admin key.  MUST be called during startup
+ */
+void http_tsdb_gen_admin_key(void);
+
 #endif
 

@@ -58,13 +58,17 @@
 /* FIXME: Make this runtime configurable */
 #define DEFAULT_SERIES_NPOINTS	24
 
+/*! FIXME: Make this configurable.  The generated admin key is written to this
+ * file on startup.  This entire approach should be reviewed */
+#define ADMIN_KEY_FILE		"adminkey.txt"
+
 /* TSDB key names in the same order as tsdb_key_id_t */
 static const char *g_key_names[] = {
 		"read", "write"
 };
 
-/* FIXME: Move to config file */
-static const tsdb_key_t g_admin_key = "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!";
+/* Global admin key generated at startup */
+static tsdb_key_t g_admin_key;
 
 static int post_values_value_parser(cJSON *json, unsigned int *nmetrics, double *values)
 {
@@ -909,3 +913,32 @@ HTTP_HANDLER(http_tsdb_get_series)
 	return MHD_HTTP_OK;
 }
 
+void http_tsdb_gen_admin_key(void)
+{
+	const char *keychars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567890^(){}[]-_=+;:@#~<>,./?";
+	char *ptr = (char*)&g_admin_key;
+	time_t now;
+	int n, nkeychars;
+	FILE *keyfile;
+
+	FUNCTION_TRACE;
+
+	now = time(NULL);
+	srandom(now);
+
+	nkeychars = strlen(keychars);
+	for (n = 0; n < sizeof(g_admin_key); n++) {
+		*ptr++ = keychars[random() % nkeychars];
+	}
+
+	INFO("Generated admin key: %.*s\n", (int)sizeof(g_admin_key), (char*)&g_admin_key);
+
+	/* Write to file */
+	keyfile = fopen(ADMIN_KEY_FILE, "w");
+	if (keyfile < 0) {
+		ERROR("Failed opening admin key file\n");
+		return;
+	}
+	fprintf(keyfile, "%.*s\n", (int)sizeof(g_admin_key), (char*)&g_admin_key);
+	fclose(keyfile);
+}
