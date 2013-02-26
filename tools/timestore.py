@@ -51,7 +51,7 @@ class Client(object):
 	def __init__(self, host = '127.0.0.1:8080'):
 		self.conn = httplib.HTTPConnection(host, strict = True)
 
-	@print_timing		
+#	@print_timing		
 	def __do_request(self, method, path, req = None, args = None, key = None, redirect = True):
 		self.conn.connect() # Will this persist if already connected (tested - NO)
 
