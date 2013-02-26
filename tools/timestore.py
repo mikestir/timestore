@@ -51,7 +51,7 @@ class Client(object):
 	def __init__(self, host = '127.0.0.1:8080'):
 		self.conn = httplib.HTTPConnection(host, strict = True)
 
-#	@print_timing		
+	@print_timing		
 	def __do_request(self, method, path, req = None, args = None, key = None, redirect = True):
 		self.conn.connect() # Will this persist if already connected (tested - NO)
 
@@ -160,11 +160,11 @@ class Client(object):
 		url = "/nodes/%x/series/%x" % (node_id, metric_id)
 		args = { 'npoints' : npoints }
 		
-		# Convert start/end to UNIX timestamp in ms
+		# Convert start/end to UNIX timestamp
 		if start:
-			args['starttime'] = time.mktime(datetime.timetuple(start))
+			args['start'] = time.mktime(datetime.timetuple(start))
 		if end:
-			args['endtime'] = time.mktime(datetime.timetuple(end))
+			args['end'] = time.mktime(datetime.timetuple(end))
 		(status, series) = self.__do_request('GET', url, args = args, key = key)
 		return series
 	

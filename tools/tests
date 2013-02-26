@@ -40,10 +40,10 @@ TIMESTORE_HOST = os.getenv('TIMESTORE_HOST', DEFAULT_HOST)
 TEST_NODE = 0x8000
 INTERVAL = 30
 DECIMATION = [10,5,2]
-NPOINTS = 100
+NPOINTS = 200
 
 # Allow admin key to be overriden in the environment
-ADMIN_KEY = os.getenv('ADMIN_KEY', DEFAULT_KEY)
+ADMIN_KEY = os.getenv('TIMESTORE_ADMIN_KEY', DEFAULT_KEY)
 # Dummy keys for auth tests
 READ_KEY = 'z' * 32
 WRITE_KEY = 'a' * 32
@@ -130,8 +130,9 @@ def do_tests():
 		dslast = ds
 		
 		# Get series and compare - need to round end time down onto required interval
-		# otherwise the output points will not lie on-grid
-		rounded_end = start + timedelta(seconds = len(ds) * interval)
+		# otherwise the output points will not lie on-grid.  There is one less interval
+		# than there are points (an interval is bounded by a point on either side).
+		rounded_end = start + timedelta(seconds = (len(ds) - 1) * interval)
 		series = t.get_series(TEST_NODE, 0, len(ds), start = start, end = rounded_end, key = READ_KEY)
 		timestamp = start
 		n = 0
