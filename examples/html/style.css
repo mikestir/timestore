@@ -1,0 +1,19 @@
+body {
+	font-family: Arial;
+}
+
+.current {
+	font-size: 1.2em;
+}
+
+#txrate {
+	color: red;
+}
+
+#rxrate {
+	color: green;
+}
+
+#graph {
+	margin-top: 50px;
+}
