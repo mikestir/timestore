@@ -51,8 +51,8 @@ def get_current(iface):
 	f.close()
 
 	for dev in all:
-		dev = dev.strip().split()
-		if dev[0] == iface + ':':
+		dev = dev.strip().replace(':',' ').split()
+		if dev[0] == iface:
 			# Return current throughput bytes for rx/tx
 			return (int(dev[1]), int(dev[9]))
 
