@@ -69,7 +69,8 @@ class Timestore
     $urlstr = '';
     if ($args) {
       $urlstr = http_build_query($args);
-      $argstr = str_replace("&","\n",$urlstr)."\n";
+      foreach ($args as $k => $v)
+        $argstr .= "$k=$v\n";
     }
 
     $msg = $method."\n".$path."\n".$argstr.$reqbody;
