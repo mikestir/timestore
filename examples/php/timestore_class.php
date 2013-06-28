@@ -60,10 +60,14 @@ class Timestore
     return $this->do_request('GET',"/nodes",false,false,$key);
   }
 
-  private function do_request($method,$path,$req,$args,$key)
+  private function do_request($method,$path,$req,$args,$key,$content_type="application/json")
   {
     $reqbody = '';
-    if ($req) $reqbody = json_encode($req);
+    if ($req)
+        if ($content_type == 'application/json')
+            $reqbody = json_encode($req);
+        else
+            $reqbody = $req;
 
     $argstr = '';
     $urlstr = '';
@@ -80,7 +84,10 @@ class Timestore
     if ($key) $signature = base64_encode(hash_hmac('sha256',$msg,$key,true));
 
     $curl = curl_init($this->host.$path);
-    if ($key) curl_setopt($curl, CURLOPT_HTTPHEADER,array('Signature:'.$signature));
+    $headers = array('Content-Type: '.$content_type);
+    if ($key)
+        array_push($headers, 'Signature: '.$signature);
+    curl_setopt($curl, CURLOPT_HTTPHEADER,$headers);
     curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($curl, CURLOPT_HEADER, true);
     curl_setopt($curl, CURLOPT_CUSTOMREQUEST, $method);
@@ -89,6 +96,11 @@ class Timestore
     curl_close($curl); 
 
     return $curl_response;
+  }
+
+  public function post_csv($node_id,$data,$key)
+  {
+    return $this->do_request('POST',"/nodes/$node_id/csv",$data,false,$key,"text/csv");
   }
 
 }
