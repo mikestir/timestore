@@ -109,7 +109,8 @@ HTTP_HANDLER(http_csv_post_values)
 				}
 			} else {
 				/* Decode value */
-				if (sscanf(start_ptr, "%lf", &values[nmetrics]) != 1) {
+				const char *fmt = (sizeof(tsdb_data_t) == sizeof(float)) ? "%f" : "%lf";
+				if (sscanf(start_ptr, fmt, &values[nmetrics]) != 1) {
 					values[nmetrics] = NAN;
 				}
 			}

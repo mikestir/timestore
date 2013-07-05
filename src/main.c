@@ -103,7 +103,7 @@ void test(void)
 {
 	tsdb_ctx_t *db;
 	int64_t t = 0;
-	double value;
+	tsdb_data_t value;
 	time_t now,last;
 	int n;
 
@@ -115,7 +115,7 @@ void test(void)
 	n = 0;
 	last = time(NULL);
 	while (1) {
-		value = 10.0 + 15.0 * ((double)random() / (double)RAND_MAX);
+		value = (tsdb_data_t)(10.0 + 15.0 * ((double)random() / (double)RAND_MAX));
 		tsdb_update_values(db, &t, &value);
 		t += 30;
 		n++;

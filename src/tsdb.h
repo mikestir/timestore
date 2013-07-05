@@ -122,7 +122,7 @@ typedef struct {
 } tsdb_metadata_t;
 
 /* Type for data points */
-typedef double tsdb_data_t;
+typedef float tsdb_data_t;
 
 typedef struct {
 	int 		meta_fd;			/*< File descriptor for metadata */

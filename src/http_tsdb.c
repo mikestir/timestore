@@ -70,7 +70,7 @@ static const char *g_key_names[] = {
 /* Global admin key generated at startup */
 static tsdb_key_t g_admin_key;
 
-static int post_values_value_parser(cJSON *json, unsigned int *nmetrics, double *values)
+static int post_values_value_parser(cJSON *json, unsigned int *nmetrics, tsdb_data_t *values)
 {
 	cJSON *subitem = json->child;
 	
@@ -86,7 +86,7 @@ static int post_values_value_parser(cJSON *json, unsigned int *nmetrics, double 
 				values[*nmetrics] = NAN;
 				break;
 			case cJSON_Number:
-				values[*nmetrics] = subitem->valuedouble;
+				values[*nmetrics] = (tsdb_data_t)subitem->valuedouble;
 				break;
 			default:
 				ERROR("values must be numeric or null\n");
@@ -99,7 +99,7 @@ static int post_values_value_parser(cJSON *json, unsigned int *nmetrics, double 
 	return 0;
 }
 
-static int post_values_data_parser(cJSON *json, int64_t *timestamp, unsigned int *nmetrics, double *values)
+static int post_values_data_parser(cJSON *json, int64_t *timestamp, unsigned int *nmetrics, tsdb_data_t *values)
 {
 	cJSON *subitem = json->child;
 	
@@ -667,7 +667,7 @@ HTTP_HANDLER(http_tsdb_post_values)
 	uint64_t node_id;
 	unsigned int nmetrics;
 	int64_t timestamp;
-	double values[TSDB_MAX_METRICS];
+	tsdb_data_t values[TSDB_MAX_METRICS];
 	int rc;
 	tsdb_key_t key;
 	
@@ -741,7 +741,7 @@ HTTP_HANDLER(http_tsdb_get_values)
 	tsdb_ctx_t *db;
 	int64_t timestamp, timestamp_orig;
 	uint64_t node_id;
-	double values[TSDB_MAX_METRICS];
+	tsdb_data_t values[TSDB_MAX_METRICS];
 	cJSON *json;	
 	int rc;
 	tsdb_key_t key;
@@ -801,7 +801,10 @@ HTTP_HANDLER(http_tsdb_get_values)
 	/* Encode the response record */
 	json = cJSON_CreateObject();
 	cJSON_AddNumberToObject(json, "timestamp", timestamp * 1000);
-	cJSON_AddItemToObject(json, "values", cJSON_CreateDoubleArray(values, db->meta->nmetrics));
+	if (sizeof(tsdb_data_t) == sizeof(float))
+		cJSON_AddItemToObject(json, "values", cJSON_CreateFloatArray((float*)values, db->meta->nmetrics));
+	else
+		cJSON_AddItemToObject(json, "values", cJSON_CreateDoubleArray((double*)values, db->meta->nmetrics));
 	tsdb_close(db);
 	
 	/* Pass response back to handler and set content type */
