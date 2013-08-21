@@ -63,7 +63,7 @@ HTTP_HANDLER(http_tsdb_get_series);
 /*!
  * \brief Generate random admin key.  MUST be called during startup
  */
-void http_tsdb_gen_admin_key(void);
+void http_tsdb_gen_admin_key(int persistent);
 
 #endif
 

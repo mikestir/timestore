@@ -916,7 +916,7 @@ HTTP_HANDLER(http_tsdb_get_series)
 	return MHD_HTTP_OK;
 }
 
-void http_tsdb_gen_admin_key(void)
+void http_tsdb_gen_admin_key(int persistent)
 {
 	const char *keychars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567890^(){}[]-_=+;:@#~<>,./?";
 	char *ptr = (char*)&g_admin_key;
@@ -929,6 +929,22 @@ void http_tsdb_gen_admin_key(void)
 	now = time(NULL);
 	srandom(now);
 
+	if (persistent) {
+		int nread = 0;
+
+		/* Use existing admin key if one is present */
+		keyfile = fopen(ADMIN_KEY_FILE, "r");
+		if (keyfile >= 0) {
+			nread = fread(&g_admin_key, 1, sizeof(g_admin_key), keyfile);
+			fclose(keyfile);
+		}
+		if (nread == sizeof(g_admin_key)) {
+			INFO("Read persistent admin key: %.*s\n", (int)sizeof(g_admin_key), (char*)&g_admin_key);
+			return;
+		}
+	}
+
+	/* Generate a new admin key */
 	nkeychars = strlen(keychars);
 	for (n = 0; n < sizeof(g_admin_key); n++) {
 		*ptr++ = keychars[random() % nkeychars];

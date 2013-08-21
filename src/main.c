@@ -34,6 +34,7 @@
 
 #include "tsdb.h"
 #include "http.h"
+#include "http_tsdb.h"
 #include "logging.h"
 #include "profile.h"
 
@@ -55,6 +56,7 @@ static void usage(const char *name)
 {
 	fprintf(stderr,
 		"Usage: %s [-d] [-v <log level>] [-p <HTTP port>] [-u <run as user>] [-D <db path>]\n\n"
+		"-a Use persistent admin key (if exists)\n"
 		"-d Don't daemonise - logs to stderr\n"
 		"-D Path to database tree\n\n"
 		"-p Override HTTP listen port\n"
@@ -131,15 +133,18 @@ void test(void)
 int main(int argc, char **argv)
 {
 	struct MHD_Daemon *d;
-	int opt, debug = 0;
+	int opt, debug = 0, persistadmin = 0;
 	int log_level = DEFAULT_LOG_LEVEL;
 	unsigned short port = DEFAULT_PORT;
 	char *path = NULL, *user = NULL;
 	struct sigaction newsa, oldsa;
 
 	/* Parse options */
-	while ((opt = getopt(argc, argv, "dD:p:u:v:")) != -1) {
+	while ((opt = getopt(argc, argv, "adD:p:u:v:")) != -1) {
 		switch (opt) {
+			case 'a':
+				persistadmin = 1;
+				break;
 			case 'd':
 				debug = 1;
 				break;
@@ -198,6 +203,11 @@ int main(int argc, char **argv)
 	sigemptyset(&newsa.sa_mask);
 	newsa.sa_flags = 0;
 	sigaction(SIGINT, &newsa, &oldsa);
+
+	/* Generate/read admin key
+	 * FIXME: This should probably not be in http_tsdb, as it could be used
+	 * globally */
+	http_tsdb_gen_admin_key(persistadmin);
 
 	/* Start web server */
 	INFO("Starting web server on port %d\n", port);

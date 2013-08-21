@@ -393,11 +393,6 @@ struct MHD_Daemon* http_init(uint16_t port)
 	
 	FUNCTION_TRACE;
 
-	/* Generate admin key */
-	/* FIXME: This should probably not be in http_tsdb, as it could be used
-	 * globally */
-	http_tsdb_gen_admin_key();
-
 	d = MHD_start_daemon(MHD_USE_THREAD_PER_CONNECTION,
 		port,
 		NULL, /* access control callback */
