@@ -122,10 +122,10 @@ typedef struct {
 } tsdb_metadata_t;
 
 /* Type for data points */
-#ifdef TSDB_FLOAT_TYPE
-typedef float tsdb_data_t;
-#else
+#ifdef TSDB_DOUBLE_TYPE
 typedef double tsdb_data_t;
+#else
+typedef float tsdb_data_t;
 #endif
 
 typedef struct {
