@@ -61,7 +61,7 @@ case "$1" in
  		
     # if timestore is running stop it
     if [ ! -z "$PID" ]; then
-      echo "Stopping exisiting timestore instance"
+      echo "Stopping existing timestore instance"
       kill -15 $PID
     else
       echo "Timestore is not running, starting anyway..."
