@@ -1,0 +1,55 @@
+#!/bin/bash
+
+## the user that must be used to run the bot
+USER=root
+
+if [ "$(whoami)" != "$USER" ]; then
+	echo "ERROR: you have to run that script as $USER, try: sudo sh install"
+	exit 1
+fi
+
+echo "=============================="
+echo "1) COMPILE TIMESTORE"
+echo "=============================="
+
+make
+
+echo "=============================="
+echo "2) TIMESTORE DATA DIRECTORY"
+echo "=============================="
+
+if [ -d "/var/lib/timestore" ]; then
+  echo "Timestore directory already exists"
+else
+  echo "Timestore data directory /var/lib/timestore created"
+  mkdir "/var/lib/timestore"
+fi
+
+echo "=============================="
+echo "3) COPY INIT SCRIPT TO INIT.D DIRECTORY"
+echo "=============================="
+
+echo "Copying init script"
+
+# Timestore directory location settings file
+echo "DIRECTORY=$PWD/src/" > /etc/default/timestore
+
+# Init script
+cp $PWD/initscript/timestore /etc/init.d/
+chmod 755 /etc/init.d/timestore
+update-rc.d timestore defaults
+
+echo "=============================="
+echo "4) START TIMESTORE"
+echo "=============================="
+
+sudo /etc/init.d/timestore restart
+
+echo "=============================="
+echo "5) TIMESTORE ADMINKEY"
+echo "=============================="
+
+adminkey=`cat /var/lib/timestore/adminkey.txt`
+echo $adminkey
+
+echo "=============================="
