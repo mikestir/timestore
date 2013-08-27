@@ -15,5 +15,14 @@ AC_CHECK_LIB([m], [sinf], [])
 # Check for pkg-config libs
 PKG_CHECK_MODULES([libmicrohttpd], [libmicrohttpd])
 
+# Check for requested features
+AC_ARG_WITH([double],
+	[AS_HELP_STRING([--with-double],
+		[use 64-bit double-precision for databases @<:@default=no@:>@])],
+	[],
+	[with_double=no])
+AS_IF([test "x$with_double" != xno],
+	[AC_DEFINE(TSDB_DOUBLE_TYPE, [], [Use 64-bit floats])], [])
+
 AC_CONFIG_FILES([Makefile src/Makefile])
 AC_OUTPUT

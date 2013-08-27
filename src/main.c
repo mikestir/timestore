@@ -44,6 +44,9 @@
 #define DEFAULT_LOG_FILE	"/var/log/timestore.log"
 #define DEFAULT_LOG_LEVEL	1
 
+extern const char *build_timestamp;
+extern const char *build_version;
+
 static int terminate = 0;
 
 /* Signal handler */
@@ -173,6 +176,9 @@ int main(int argc, char **argv)
 	if (!debug) {
 		daemonise();
 	}
+
+	INFO("Starting timestore version %s, built on %s\n", build_version, build_timestamp);
+	INFO("Data size is %u\n", (unsigned int)sizeof(tsdb_data_t));
 
 	/* Assume defaults for strings */
 	if (path == NULL)
