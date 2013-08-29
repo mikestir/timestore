@@ -58,14 +58,17 @@ void sigint_handler(int signum)
 static void usage(const char *name)
 {
 	fprintf(stderr,
+		"Timestore v%s built %s\n"
+		"(C) 2012-2013 Mike Stirling\n\n"
 		"Usage: %s [-d] [-v <log level>] [-p <HTTP port>] [-u <run as user>] [-D <db path>]\n\n"
 		"-a Use persistent admin key (if exists)\n"
 		"-d Don't daemonise - logs to stderr\n"
 		"-D Path to database tree\n\n"
 		"-p Override HTTP listen port\n"
 		"-u Run as specified user (not when -d specified)\n"
-		"-v Set logging verbosity\n"
-		, name);
+		"-v Set logging verbosity\n",
+		build_version, build_timestamp,
+		name);
 	exit(EXIT_FAILURE);
 }
 
