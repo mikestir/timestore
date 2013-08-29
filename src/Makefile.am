@@ -8,7 +8,6 @@ AM_CFLAGS = \
 
 bin_PROGRAMS = timestore
 timestore_SOURCES = \
-	build.c \
 	main.c \
 	logging.c \
 	tsdb.c \
@@ -21,7 +20,4 @@ timestore_SOURCES = \
 
 timestore_LDADD = -lm -lpthread -lrt \
 	$(libmicrohttpd_LIBS)
-
-build.o: FORCE
-.PHONY: FORCE
 

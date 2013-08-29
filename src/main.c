@@ -21,6 +21,10 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,9 +48,6 @@
 #define DEFAULT_LOG_FILE	"/var/log/timestore.log"
 #define DEFAULT_LOG_LEVEL	1
 
-extern const char *build_timestamp;
-extern const char *build_version;
-
 static int terminate = 0;
 
 /* Signal handler */
@@ -58,7 +59,7 @@ void sigint_handler(int signum)
 static void usage(const char *name)
 {
 	fprintf(stderr,
-		"Timestore v%s built %s\n"
+		"Timestore v" PACKAGE_VERSION "\n"
 		"(C) 2012-2013 Mike Stirling\n\n"
 		"Usage: %s [-d] [-v <log level>] [-p <HTTP port>] [-u <run as user>] [-D <db path>]\n\n"
 		"-a Use persistent admin key (if exists)\n"
@@ -67,7 +68,6 @@ static void usage(const char *name)
 		"-p Override HTTP listen port\n"
 		"-u Run as specified user (not when -d specified)\n"
 		"-v Set logging verbosity\n",
-		build_version, build_timestamp,
 		name);
 	exit(EXIT_FAILURE);
 }
@@ -180,7 +180,7 @@ int main(int argc, char **argv)
 		daemonise();
 	}
 
-	INFO("Starting timestore version %s, built on %s\n", build_version, build_timestamp);
+	INFO("Starting timestore version " PACKAGE_VERSION "\n");
 	INFO("Data size is %u\n", (unsigned int)sizeof(tsdb_data_t));
 
 	/* Assume defaults for strings */
