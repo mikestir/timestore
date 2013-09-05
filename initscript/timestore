@@ -1,0 +1,107 @@
+#!/bin/bash
+
+# Timestore init script
+
+### BEGIN INIT INFO
+# Provides:          timestore
+# Required-Start:    $remote_fs
+# Required-Stop:     $remote_fs
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Timestore init script
+# Description:       Timestore init script
+### END INIT INFO
+
+# Load timestore directory from /etc/default/timestore
+. /etc/default/timestore
+
+## the user that must be used to run the bot
+USER=root
+
+if [ "$(whoami)" != "$USER" ]; then
+	echo "ERROR: you have to run that script as $USER"
+	exit 1
+fi
+
+# Run timestore with
+# -a use adminkey if it already exists
+COMMAND="$DIRECTORY./timestore"
+
+## Main functions
+
+PID=`pidof timestore`
+
+case "$1" in
+	# ------------------------------------------------------
+	start)
+	
+    if [ ! -z "$PID" ]; then
+      echo "ERROR: timestore is already running"
+    else
+      echo "Starting timestore"
+      a=""
+      if [ -f /var/lib/timestore/adminkey.txt ]; then 
+        echo "Using existing adminkey"
+        a=" -a"
+      fi
+      echo $COMMAND$a
+      $COMMAND$a > /dev/null 2>&1
+    fi
+    
+	;;
+	# ------------------------------------------------------
+	stop)
+	
+    if [ ! -z "$PID" ]; then
+      echo "Stopping timestore"
+      kill -15 $PID
+    else
+      echo "Timestore is not running"
+    fi
+    
+	;;
+	# ------------------------------------------------------
+	restart)
+	
+ 		echo "Restarting timestore"
+ 		
+    # if timestore is running stop it
+    if [ ! -z "$PID" ]; then
+      echo "Stopping existing timestore instance"
+      kill -15 $PID
+    else
+      echo "Timestore is not running, starting anyway..."
+    fi
+    
+    sleep 1
+    
+    # start timestore with or without logging  
+    echo "Starting timestore"
+    a=""
+    if [ -f /var/lib/timestore/adminkey.txt ]; then 
+      echo "Using existing adminkey"
+      a=" -a"
+    fi
+    echo $COMMAND$a
+    $COMMAND$a > /dev/null 2>&1
+    
+	;;
+	# ------------------------------------------------------
+	status)
+
+    if [ ! -z "$PID" ]; then
+      echo "Timestore is running"
+    else
+      echo "Timestore is not running"
+    fi
+    
+	;;
+	# ------------------------------------------------------
+  *)
+	PROG_NAME=`basename $0`
+	echo "Usage: $PROG_NAME {start|stop|restart|status}"
+	exit 1
+esac
+
+exit 0
+
