@@ -25,7 +25,7 @@ fi
 
 # Run timestore with
 # -a use adminkey if it already exists
-COMMAND="$DIRECTORY./timestore -a"
+COMMAND="$DIRECTORY./timestore"
 
 ## Main functions
 
@@ -39,7 +39,13 @@ case "$1" in
       echo "ERROR: timestore is already running"
     else
       echo "Starting timestore"
-      $COMMAND > /dev/null 2>&1
+      a=""
+      if [ -f /var/lib/timestore/adminkey.txt ]; then 
+        echo "Using existing adminkey"
+        a=" -a"
+      fi
+      echo $COMMAND$a
+      $COMMAND$a > /dev/null 2>&1
     fi
     
 	;;
@@ -71,7 +77,13 @@ case "$1" in
     
     # start timestore with or without logging  
     echo "Starting timestore"
-    $COMMAND > /dev/null 2>&1
+    a=""
+    if [ -f /var/lib/timestore/adminkey.txt ]; then 
+      echo "Using existing adminkey"
+      a=" -a"
+    fi
+    echo $COMMAND$a
+    $COMMAND$a > /dev/null 2>&1
     
 	;;
 	# ------------------------------------------------------
