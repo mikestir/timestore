@@ -21,3 +21,4 @@ timestore_SOURCES = \
 timestore_LDADD = -lm -lpthread -lrt \
 	$(libmicrohttpd_LIBS)
 
+-include $(top_srcdir)/git.mk
