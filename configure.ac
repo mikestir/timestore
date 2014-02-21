@@ -24,5 +24,5 @@ AC_ARG_WITH([double],
 AS_IF([test "x$with_double" != xno],
 	[AC_DEFINE(TSDB_DOUBLE_TYPE, [], [Use 64-bit floats])], [])
 
-AC_CONFIG_FILES([Makefile src/Makefile])
+AC_CONFIG_FILES([Makefile src/Makefile src/cJSON/Makefile])
 AC_OUTPUT
